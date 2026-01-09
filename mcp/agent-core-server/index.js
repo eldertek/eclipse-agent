@@ -910,7 +910,6 @@ Use when:
         reason: z.string().describe("Why this memory should be forgotten")
     },
     async (args) => {
-        // Try to find in profile first, then global
         let stmts = profileStmts;
         let existing = stmts.getMemoryById.get(args.memory_id);
         let scope = "profile";
@@ -922,26 +921,14 @@ Use when:
         }
 
         if (!existing) {
-            return {
-                content: [{ type: "text", text: `❌ Memory not found: ${args.memory_id}` }],
-                isError: true
-            };
+            return { content: [{ type: "text", text: JSON.stringify({ error: "not_found", id: args.memory_id }) }], isError: true };
         }
 
         try {
             stmts.deleteMemory.run(args.memory_id);
-
-            return {
-                content: [{
-                    type: "text",
-                    text: `✅ Memory forgotten\n\n**Title**: ${existing.title}\n**Scope**: ${scope}\n**Reason**: ${args.reason}`
-                }]
-            };
+            return { content: [{ type: "text", text: JSON.stringify({ status: "deleted", id: args.memory_id.slice(0, 8), title: existing.title, scope }) }] };
         } catch (error) {
-            return {
-                content: [{ type: "text", text: `❌ Deletion failed: ${error.message}` }],
-                isError: true
-            };
+            return { content: [{ type: "text", text: JSON.stringify({ error: error.message }) }], isError: true };
         }
     }
 );
@@ -974,7 +961,6 @@ Use this to:
         const scope = args.scope || "all";
         const nowTime = Date.now();
 
-        // Collect memories
         let allMemories = [];
         if (scope === "all" || scope === "profile") {
             allMemories.push(...profileStmts.getAllMemories.all().map(m => ({ ...m, source: "profile" })));
@@ -984,88 +970,32 @@ Use this to:
         }
 
         if (allMemories.length === 0) {
-            return {
-                content: [{
-                    type: "text",
-                    text: `📊 **Memory Stats** (${scope})\n\nNo memories found.\n\n→ Use \`memory_save\` to start building your knowledge base.`
-                }]
-            };
+            return { content: [{ type: "text", text: JSON.stringify({ total: 0 }) }] };
         }
 
-        // Count by type
-        const byType = { semantic: 0, procedural: 0, episodic: 0 };
-        const bySource = { profile: 0, global: 0 };
-        let totalAccesses = 0;
+        const byType = { semantic: 0, procedural: 0, episodic: 0, skill: 0 };
         const neverAccessed = [];
-        const decayed = [];
 
         for (const m of allMemories) {
-            byType[m.type]++;
-            bySource[m.source]++;
-            totalAccesses += m.access_count;
-
-            if (m.access_count === 0) {
-                neverAccessed.push(m);
-            }
-
-            // Check decay
-            const lastAccess = new Date(m.last_accessed).getTime();
-            const daysSinceAccess = (nowTime - lastAccess) / (1000 * 60 * 60 * 24);
-            if (daysSinceAccess > 30 && m.access_count === 0) {
-                decayed.push({ ...m, daysSinceAccess: Math.floor(daysSinceAccess) });
-            }
+            byType[m.type] = (byType[m.type] || 0) + 1;
+            if (m.access_count === 0) neverAccessed.push(m.id.slice(0, 8));
         }
 
-        // Top accessed
         const topAccessed = [...allMemories]
             .sort((a, b) => b.access_count - a.access_count)
-            .slice(0, 5);
-
-        // Oldest
-        const oldest = [...allMemories]
-            .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
-            .slice(0, 3);
-
-        // Format output
-        let output = `📊 **Memory Stats** (${scope})\n\n`;
-        output += `**Total**: ${allMemories.length} memories\n\n`;
-
-        output += `**By Type**:\n`;
-        output += `├── semantic: ${byType.semantic} (${Math.round(byType.semantic / allMemories.length * 100)}%)\n`;
-        output += `├── procedural: ${byType.procedural} (${Math.round(byType.procedural / allMemories.length * 100)}%)\n`;
-        output += `└── episodic: ${byType.episodic} (${Math.round(byType.episodic / allMemories.length * 100)}%)\n\n`;
-
-        if (scope === "all") {
-            output += `**By Source**:\n`;
-            output += `├── profile (${CURRENT_PROFILE}): ${bySource.profile}\n`;
-            output += `└── global: ${bySource.global}\n\n`;
-        }
-
-        output += `**Top Accessed**:\n`;
-        topAccessed.forEach((m, i) => {
-            output += `${i + 1}. "${m.title}" (${m.access_count} accesses)\n`;
-        });
-
-        if (neverAccessed.length > 0) {
-            output += `\n⚠️ **Never Accessed**: ${neverAccessed.length} memories\n`;
-            neverAccessed.slice(0, 3).forEach(m => {
-                output += `   - "${m.title}" (${m.id})\n`;
-            });
-            if (neverAccessed.length > 3) {
-                output += `   ... and ${neverAccessed.length - 3} more\n`;
-            }
-            output += `\n→ Consider using \`memory_forget\` to clean up unused memories.`;
-        }
-
-        if (decayed.length > 0) {
-            output += `\n\n🕐 **Decayed** (>30 days, never accessed): ${decayed.length} memories\n`;
-            decayed.slice(0, 3).forEach(m => {
-                output += `   - "${m.title}" (${m.daysSinceAccess} days old)\n`;
-            });
-        }
+            .slice(0, 5)
+            .map(m => ({ title: m.title, accesses: m.access_count }));
 
         return {
-            content: [{ type: "text", text: output }]
+            content: [{
+                type: "text",
+                text: JSON.stringify({
+                    total: allMemories.length,
+                    byType,
+                    topAccessed,
+                    neverAccessed: neverAccessed.slice(0, 5)
+                })
+            }]
         };
     }
 );
@@ -1087,7 +1017,6 @@ Use this to:
     async (args) => {
         const limit = args.limit || 5;
 
-        // Find the source memory
         let sourceMemory = profileStmts.getMemoryById.get(args.memory_id);
         let sourceScope = "profile";
         if (!sourceMemory) {
@@ -1096,43 +1025,27 @@ Use this to:
         }
 
         if (!sourceMemory) {
-            return {
-                content: [{ type: "text", text: `❌ Memory not found: ${args.memory_id}\n\n→ Use \`memory_stats\` to see available memories.` }],
-                isError: true
-            };
+            return { content: [{ type: "text", text: JSON.stringify({ error: "not_found" }) }], isError: true };
         }
 
         const similar = await findSimilarMemories(args.memory_id, limit);
 
-        if (similar.length === 0) {
-            return {
-                content: [{
-                    type: "text",
-                    text: `🔗 **Cluster for**: "${sourceMemory.title}"\n\nNo similar memories found.\n\n→ This memory is unique in your knowledge base.`
-                }]
-            };
-        }
-
-        let output = `🔗 **Cluster for**: "${sourceMemory.title}"\n`;
-        output += `**Source**: ${sourceScope} | **Type**: ${sourceMemory.type}\n\n`;
-        output += `**Similar Memories** (${similar.length}):\n\n`;
-
-        similar.forEach((m, i) => {
-            const similarity = (m.similarity * 100).toFixed(0);
-            output += `### ${i + 1}. ${m.title}\n`;
-            output += `**Match**: ${similarity}% | **Type**: ${m.type} | **Source**: ${m.source}\n`;
-            output += `${m.content.slice(0, 150)}${m.content.length > 150 ? "..." : ""}\n\n`;
-        });
-
-        // Check for potential duplicates
-        const duplicates = similar.filter(m => m.similarity > 0.9);
-        if (duplicates.length > 0) {
-            output += `\n⚠️ **Potential duplicates** (>90% similar): ${duplicates.length}\n`;
-            output += `→ Consider using \`memory_forget\` to consolidate.`;
-        }
+        const results = similar.map(m => ({
+            id: m.id.slice(0, 8),
+            title: m.title,
+            match: Math.round(m.similarity * 100),
+            type: m.type
+        }));
 
         return {
-            content: [{ type: "text", text: output }]
+            content: [{
+                type: "text",
+                text: JSON.stringify({
+                    source: sourceMemory.title,
+                    similar: results,
+                    duplicates: results.filter(r => r.match > 90).length
+                })
+            }]
         };
     }
 );
@@ -1332,7 +1245,11 @@ Profiles allow you to have separate memories for different projects.`,
         return {
             content: [{
                 type: "text",
-                text: `📂 **Profile Information**\n\n**Current Profile**: ${CURRENT_PROFILE}\n**Detection Method**: ${process.env.ECLIPSE_PROFILE ? "ENV variable" : "auto-detected from CWD"}\n\n**Available Profiles**:\n${profileList || "None"}\n\n**Note**: Set ECLIPSE_PROFILE env var to override auto-detection.`
+                text: JSON.stringify({
+                    current: CURRENT_PROFILE,
+                    detection: process.env.ECLIPSE_PROFILE ? "env" : "cwd",
+                    profiles: Object.entries(counts).map(([name, count]) => ({ name, count, current: name === CURRENT_PROFILE }))
+                })
             }]
         };
     }
@@ -1373,17 +1290,9 @@ Use when making choices that affect:
                 timestamp
             );
 
-            return {
-                content: [{
-                    type: "text",
-                    text: `📋 Decision logged\n\n**ID**: ${id}\n**Profile**: ${CURRENT_PROFILE}\n**Decision**: ${args.decision}\n**Context**: ${args.context}\n**Rationale**: ${args.rationale}${args.alternatives ? `\n**Alternatives considered**: ${args.alternatives}` : ""}\n\n→ If this is a reusable pattern, also use \`memory_save\` (type: procedural) to remember it`
-                }]
-            };
+            return { content: [{ type: "text", text: JSON.stringify({ status: "logged", id: id.slice(0, 8), decision: args.decision }) }] };
         } catch (error) {
-            return {
-                content: [{ type: "text", text: `❌ Failed to log decision: ${error.message}` }],
-                isError: true
-            };
+            return { content: [{ type: "text", text: JSON.stringify({ error: error.message }) }], isError: true };
         }
     }
 );
@@ -1402,30 +1311,15 @@ server.tool(
         try {
             const results = profileStmts.searchDecisions.all(searchPattern, searchPattern, limit);
 
-            if (results.length === 0) {
-                return {
-                    content: [{
-                        type: "text",
-                        text: `No past decisions found for: "${args.query}"`
-                    }]
-                };
-            }
+            const formatted = results.map(r => ({
+                decision: r.decision,
+                context: r.context.slice(0, 80),
+                rationale: r.rationale.slice(0, 80)
+            }));
 
-            const formatted = results.map((r, i) => {
-                return `### ${i + 1}. ${r.decision}\n**Context**: ${r.context}\n**Rationale**: ${r.rationale}${r.alternatives ? `\n**Alternatives**: ${r.alternatives}` : ""}\n**Recorded**: ${r.created_at}`;
-            }).join("\n\n---\n\n");
-
-            return {
-                content: [{
-                    type: "text",
-                    text: `Found ${results.length} past decisions:\n\n${formatted}`
-                }]
-            };
+            return { content: [{ type: "text", text: JSON.stringify({ results: formatted }) }] };
         } catch (error) {
-            return {
-                content: [{ type: "text", text: `❌ Search failed: ${error.message}` }],
-                isError: true
-            };
+            return { content: [{ type: "text", text: JSON.stringify({ error: error.message }) }], isError: true };
         }
     }
 );
