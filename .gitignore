@@ -21,3 +21,6 @@ Thumbs.db
 
 # Backups
 *.backup.*
+
+# Sandbox
+sandbox/
