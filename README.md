@@ -8,59 +8,37 @@ A minimal, powerful AI code agent framework with long-term memory and structured
 curl -fsSL https://raw.githubusercontent.com/eldertek/eclipse-agent/main/install.sh | bash
 ```
 
-## What It Does
-
-The installer:
-
-1. **Clones** the repo to `~/eclipse-agent`
-2. **Installs** MCP server dependencies
-3. **Configures** Antigravity/Gemini CLI:
-   - `~/.gemini/GEMINI.md` - System prompt
-   - `~/.gemini/antigravity/mcp_config.json` - MCP configuration
-
-## Architecture
+## Core Workflow (3 tools)
 
 ```
-~/eclipse-agent/
-├── install.sh              # Main installer
-├── config/
-│   └── GEMINI.md           # System prompt (→ ~/.gemini/GEMINI.md)
-├── mcp/
-│   └── agent-core-server/  # Unified MCP server
-│       ├── index.js        # Server implementation
-│       └── package.json    # Dependencies
-└── scripts/
-    └── update.sh           # Manual update script
+begin_task("what you're doing")
+    ↓
+checkpoint("progress note")
+    ↓
+end_task("summary")
 ```
 
-## MCP Tools
+That's it. Everything else is optional.
 
-The `core` MCP provides 10 tools:
+## All 15 Tools
 
 | Category | Tool | Description |
 |----------|------|-------------|
-| **Loop** | `should_continue` | Prevents premature stopping |
-| **Planning** | `task_start` | Begin a work session |
-| | `phase_transition` | Move between phases |
+| **Workflow** | `begin_task` | Start a task (auto-searches memory) |
+| | `end_task` | Finish a task (auto-suggests skills) |
 | | `checkpoint` | Log progress |
-| **Memory** | `memory_save` | Save to long-term memory |
+| | `task_resume` | Resume previous session |
+| | `skill_from_session` | Generate skill from checkpoints |
+| **Memory** | `memory_save` | Save knowledge (types: semantic, procedural, episodic, skill) |
 | | `memory_search` | Search memories |
 | | `memory_update` | Update existing memory |
 | | `memory_forget` | Delete obsolete memory |
+| | `memory_stats` | View memory statistics |
+| | `memory_cluster` | Find similar memories |
+| | `memory_compress` | Clean up old memories |
+| **Profile** | `profile_info` | View current profile |
 | **Decisions** | `decision_log` | Record technical decisions |
 | | `decision_search` | Query past decisions |
-
-## Workflow Phases
-
-```
-understand → plan → execute → verify
-    🔍         📋       ⚡        ✅
-```
-
-1. **understand**: Read code, clarify requirements, research
-2. **plan**: Formulate approach, identify risks
-3. **execute**: Make minimal, surgical changes
-4. **verify**: Test, validate, self-critique
 
 ## Memory Types
 
@@ -69,49 +47,33 @@ understand → plan → execute → verify
 | `semantic` | Facts & knowledge | Conventions, architecture, preferences |
 | `procedural` | How to do things | Workflows, patterns, best practices |
 | `episodic` | Past experiences | Decisions, errors, lessons learned |
+| `skill` | Structured how-to | TRIGGER/STEPS/RELATED format |
 
-## Manual Update
-
-To update to the latest version:
+## Update
 
 ```bash
 ~/eclipse-agent/scripts/update.sh
 ```
 
-## Verify Installation
+## Diagnose
 
 ```bash
-# Start Gemini CLI
-gemini
-
-# Check MCPs
-/mcp list
-
-# You should see:
-# - core (10 tools)
+~/eclipse-agent/scripts/doctor.sh
 ```
 
 ## Data Storage
 
-Persistent data is stored in:
-
 ```
-~/.gemini/antigravity/agent-data/
-└── agent-core.db          # SQLite database (memories, sessions, decisions)
+~/.gemini/antigravity/agent-data/profiles/{project}/memory.db
 ```
 
 ## Uninstall
 
 ```bash
-# Remove installation
 rm -rf ~/eclipse-agent
-
-# Remove config
 rm ~/.gemini/GEMINI.md
 rm ~/.gemini/antigravity/mcp_config.json
-
-# Optionally remove data
-rm -rf ~/.gemini/antigravity/agent-data
+rm -rf ~/.gemini/antigravity/agent-data  # Optional: removes all memories
 ```
 
 ## License

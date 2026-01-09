@@ -86,7 +86,7 @@ function initDatabase(dbPath) {
     -- Long-term memory table with embedding support
     CREATE TABLE IF NOT EXISTS memories (
       id TEXT PRIMARY KEY,
-      type TEXT NOT NULL CHECK(type IN ('semantic', 'procedural', 'episodic')),
+      type TEXT NOT NULL CHECK(type IN ('semantic', 'procedural', 'episodic', 'skill')),
       category TEXT NOT NULL,
       title TEXT NOT NULL,
       content TEXT NOT NULL,
