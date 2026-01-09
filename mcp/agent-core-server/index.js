@@ -126,6 +126,14 @@ function initDatabase(dbPath) {
     CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type);
     CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
     CREATE INDEX IF NOT EXISTS idx_decisions_session ON decisions(session_id);
+
+    -- Tool usage tracking
+    CREATE TABLE IF NOT EXISTS tool_usage (
+      tool_name TEXT PRIMARY KEY,
+      call_count INTEGER DEFAULT 0,
+      last_called TEXT,
+      first_called TEXT
+    );
   `);
 
     return db;
@@ -300,11 +308,27 @@ function prepareStatements(db) {
 
         insertDecision: db.prepare(`INSERT INTO decisions (id, session_id, decision, context, rationale, alternatives, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`),
         searchDecisions: db.prepare(`SELECT * FROM decisions WHERE decision LIKE ? OR context LIKE ? ORDER BY created_at DESC LIMIT ?`),
+
+        // Tool usage tracking
+        trackTool: db.prepare(`
+            INSERT INTO tool_usage (tool_name, call_count, last_called, first_called)
+            VALUES (?, 1, ?, ?)
+            ON CONFLICT(tool_name) DO UPDATE SET call_count = call_count + 1, last_called = ?
+        `),
+        getToolStats: db.prepare(`SELECT * FROM tool_usage ORDER BY call_count DESC`),
     };
 }
 
 const profileStmts = prepareStatements(profileDb);
 const globalStmts = prepareStatements(globalDb);
+
+// Track tool usage
+function trackTool(name) {
+    const ts = now();
+    try {
+        profileStmts.trackTool.run(name, ts, ts, ts);
+    } catch { }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // UTILITIES
@@ -445,8 +469,16 @@ async function findSimilarMemories(memoryId, limit = 5) {
 
 const server = new McpServer({
     name: "agent-core",
-    version: "3.1.0",
+    version: "3.3.0",
 });
+
+// Wrapper to auto-track tool usage
+function tracked(name, handler) {
+    return async (args) => {
+        trackTool(name);
+        return handler(args);
+    };
+}
 
 // ───────────────────────────────────────────────────────────────────────────
 // LOOP CONTROL
@@ -465,6 +497,7 @@ Use when you're done and want to wrap up quickly.`,
         verified: z.boolean().optional().describe("Did you test/verify the solution? (default: true)")
     },
     async (args) => {
+        trackTool("end_task");
         const session = profileStmts.getActiveSession.get();
 
         if (!session) {
@@ -507,6 +540,7 @@ server.tool(
         session_id: z.string().optional().describe("Session ID (defaults to current/last)")
     },
     async (args) => {
+        trackTool("skill_from_session");
         let session = args.session_id
             ? profileStmts.getSessionById.get(args.session_id)
             : profileStmts.getActiveSession.get();
@@ -572,6 +606,7 @@ Current profile: ${CURRENT_PROFILE}`,
         task_summary: z.string().describe("Brief description of what you're about to do")
     },
     async (args) => {
+        trackTool("begin_task");
         const id = generateId();
         const timestamp = now();
 
@@ -628,6 +663,7 @@ server.tool(
         session_id: z.string().optional().describe("Session ID (omit to list recent)")
     },
     async (args) => {
+        trackTool("task_resume");
         if (!args.session_id) {
             const sessions = profileStmts.getRecentSessions.all(10);
 
@@ -684,6 +720,7 @@ server.tool(
         importance: z.enum(["low", "medium", "high"]).optional().describe("Significance (default: medium)")
     },
     async (args) => {
+        trackTool("checkpoint");
         const session = profileStmts.getActiveSession.get();
 
         if (!session) {
@@ -752,6 +789,7 @@ Be PARSIMONIOUS: only save what's genuinely useful for future work.`,
         scope: z.enum(["profile", "global"]).optional().describe("Where to save: profile (project-specific) or global (shared)")
     },
     async (args) => {
+        trackTool("memory_save");
         const id = generateId();
         const timestamp = now();
         const scope = args.scope || "profile";
@@ -818,6 +856,7 @@ server.tool(
         scope: z.enum(["all", "profile", "global"]).optional().describe("Where to search")
     },
     async (args) => {
+        trackTool("memory_search");
         const types = args.memory_types || ["semantic", "procedural", "episodic", "skill"];
         const limit = args.limit || 5;
         const scope = args.scope || "all";
@@ -1321,6 +1360,46 @@ server.tool(
         } catch (error) {
             return { content: [{ type: "text", text: JSON.stringify({ error: error.message }) }], isError: true };
         }
+    }
+);
+
+server.tool(
+    "tool_stats",
+    `Get usage statistics for all tools. Shows which tools are used most/least to identify workflow improvements.`,
+    {},
+    async () => {
+        const stats = profileStmts.getToolStats.all();
+
+        const allTools = [
+            "begin_task", "end_task", "checkpoint", "skill_from_session", "task_resume",
+            "memory_save", "memory_search", "memory_update", "memory_forget",
+            "memory_stats", "memory_cluster", "memory_compress",
+            "profile_info", "decision_log", "decision_search", "tool_stats"
+        ];
+
+        const usageMap = {};
+        for (const s of stats) {
+            usageMap[s.tool_name] = s.call_count;
+        }
+
+        const result = allTools.map(name => ({
+            tool: name,
+            calls: usageMap[name] || 0
+        })).sort((a, b) => b.calls - a.calls);
+
+        const neverUsed = result.filter(r => r.calls === 0).map(r => r.tool);
+        const topUsed = result.slice(0, 5);
+
+        return {
+            content: [{
+                type: "text",
+                text: JSON.stringify({
+                    tools: result,
+                    neverUsed,
+                    topUsed: topUsed.map(t => t.tool)
+                })
+            }]
+        };
     }
 );
 
