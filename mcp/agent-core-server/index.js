@@ -322,12 +322,17 @@ function prepareStatements(db) {
 const profileStmts = prepareStatements(profileDb);
 const globalStmts = prepareStatements(globalDb);
 
-// Track tool usage
+// Track tool usage - non-blocking to prevent SQLite locks
 function trackTool(name) {
-    const ts = now();
-    try {
-        profileStmts.trackTool.run(name, ts, ts, ts);
-    } catch { }
+    setImmediate(() => {
+        const ts = now();
+        try {
+            profileStmts.trackTool.run(name, ts, ts, ts);
+        } catch (err) {
+            // Silently fail on tracking errors to not disrupt main flow
+            // console.error("Tracking error:", err.message);
+        }
+    });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
