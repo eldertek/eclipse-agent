@@ -445,7 +445,7 @@ async function findSimilarMemories(memoryId, limit = 5) {
 
 const server = new McpServer({
     name: "agent-core",
-    version: "3.0.0",
+    version: "3.1.0",
 });
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -500,10 +500,98 @@ Use when you're done and want to wrap up quickly.`,
 
         output += `\n→ You may end your response now.`;
 
-        // Suggest memory save if significant work
+        // Smart suggestions based on work done
         if (checkpoints.length >= 2) {
-            output += `\n\n💡 Consider \`memory_save\` if you discovered something reusable.`;
+            // Check if this looks like a technical problem solved
+            const taskLower = session.task_summary.toLowerCase();
+            const isTechnical = ['fix', 'debug', 'deploy', 'error', 'fail', 'issue', 'problem', 'bug']
+                .some(word => taskLower.includes(word));
+
+            if (isTechnical) {
+                output += `\n\n💡 **Skill detected!** You solved a technical problem.\n`;
+                output += `→ Use \`memory_save(type: "skill")\` to save this as a reusable skill\n`;
+                output += `→ Or use \`skill_from_session\` to auto-generate from checkpoints`;
+            } else {
+                output += `\n\n💡 Consider \`memory_save\` if you discovered something reusable.`;
+            }
         }
+
+        return {
+            content: [{ type: "text", text: output }]
+        };
+    }
+);
+
+server.tool(
+    "skill_from_session",
+    `Generate a skill template from the current or recent session.
+
+Analyzes your checkpoints and creates a structured skill you can save.
+
+Use after solving a technical problem to capture the solution pattern.`,
+    {
+        title: z.string().optional().describe("Title for the skill (auto-generated if not provided)"),
+        session_id: z.string().optional().describe("Session ID to use (defaults to current/last session)")
+    },
+    async (args) => {
+        // Get session
+        let session = args.session_id
+            ? profileStmts.getSessionById.get(args.session_id)
+            : profileStmts.getActiveSession.get();
+
+        // If no active session, get most recent
+        if (!session) {
+            const recent = profileStmts.getRecentSessions.all(1);
+            if (recent.length > 0) session = recent[0];
+        }
+
+        if (!session) {
+            return {
+                content: [{
+                    type: "text",
+                    text: `❌ No session found. Use \`begin_task\` first to track your work.`
+                }],
+                isError: true
+            };
+        }
+
+        const checkpoints = JSON.parse(session.checkpoints || "[]");
+
+        if (checkpoints.length === 0) {
+            return {
+                content: [{
+                    type: "text",
+                    text: `⚠️ No checkpoints in session. Use \`checkpoint\` to log your progress before generating a skill.`
+                }]
+            };
+        }
+
+        // Generate skill template
+        const title = args.title || session.task_summary;
+        const steps = checkpoints.map((cp, i) => `${i + 1}. ${cp.note || cp.summary}`).join('\n');
+
+        // Try to detect trigger from task summary
+        const taskLower = session.task_summary.toLowerCase();
+        let trigger = "When: " + session.task_summary;
+        if (taskLower.includes('error') || taskLower.includes('fail')) {
+            trigger = `When: Error occurs - "${session.task_summary}"`;
+        } else if (taskLower.includes('deploy')) {
+            trigger = `When: Deployment issue - "${session.task_summary}"`;
+        }
+
+        const skillContent = `TRIGGER: ${trigger}
+
+STEPS:
+${steps}
+
+RELATED: [Add relevant tables, commands, or files here]`;
+
+        let output = `📋 **Skill Template Generated**\n\n`;
+        output += `**Title**: ${title}\n`;
+        output += `**Based on**: ${checkpoints.length} checkpoints\n\n`;
+        output += `\`\`\`\n${skillContent}\n\`\`\`\n\n`;
+        output += `→ To save: \`memory_save(type: "skill", title: "${title}", content: "...")\`\n`;
+        output += `→ Edit the RELATED section before saving`;
 
         return {
             content: [{ type: "text", text: output }]
@@ -739,6 +827,14 @@ Memory types:
 - semantic: Facts, conventions, architecture knowledge, preferences
 - procedural: How to do things, workflows, patterns, best practices
 - episodic: Past decisions, errors made, lessons learned
+- skill: Structured how-to with trigger conditions and steps
+
+For SKILL type, format content as:
+  TRIGGER: When this happens...
+  STEPS:
+  1. First step
+  2. Second step
+  RELATED: tables, commands, or files involved
 
 Scope:
 - profile (default): Saved to current project (${CURRENT_PROFILE})
@@ -746,10 +842,10 @@ Scope:
 
 Be PARSIMONIOUS: only save what's genuinely useful for future work.`,
     {
-        type: z.enum(["semantic", "procedural", "episodic"]).describe("Type of memory"),
-        category: z.string().describe("Category (e.g., 'project-structure', 'debugging', 'api-patterns')"),
+        type: z.enum(["semantic", "procedural", "episodic", "skill"]).describe("Type of memory"),
+        category: z.string().describe("Category (e.g., 'debugging', 'deployment', 'api-patterns')"),
         title: z.string().describe("Brief, searchable title"),
-        content: z.string().describe("The knowledge to remember"),
+        content: z.string().describe("The knowledge to remember (for skill: use TRIGGER/STEPS/RELATED format)"),
         tags: z.array(z.string()).optional().describe("Tags for search"),
         confidence: z.number().min(0).max(1).optional().describe("Confidence level (0.0-1.0), default 1.0"),
         scope: z.enum(["profile", "global"]).optional().describe("Where to save: profile (project-specific) or global (shared)")
