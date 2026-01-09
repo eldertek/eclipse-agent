@@ -309,7 +309,8 @@ async function semanticSearch(query, options = {}) {
         return results.slice(0, limit);
     }
 
-    // Calculate similarity scores
+    // Calculate similarity scores with temporal decay
+    const nowTime = Date.now();
     const scored = allMemories.map(memory => {
         const memoryEmbedding = bufferToEmbedding(memory.embedding);
         const similarity = memoryEmbedding ? cosineSimilarity(queryEmbedding, memoryEmbedding) : 0;
@@ -317,13 +318,54 @@ async function semanticSearch(query, options = {}) {
         // Boost by access count (slight preference for frequently used memories)
         const accessBoost = Math.min(memory.access_count * 0.01, 0.1);
 
+        // Temporal decay: reduce score for old, unused memories
+        const lastAccess = new Date(memory.last_accessed).getTime();
+        const daysSinceAccess = (nowTime - lastAccess) / (1000 * 60 * 60 * 24);
+        const decayFactor = memory.access_count === 0
+            ? Math.max(0.5, 1 - (daysSinceAccess / 60)) // Unused: decay to 0.5 over 60 days
+            : Math.max(0.8, 1 - (daysSinceAccess / 180)); // Used: decay to 0.8 over 180 days
+
         return {
             ...memory,
-            similarity: similarity + accessBoost,
+            similarity: (similarity + accessBoost) * decayFactor,
+            rawSimilarity: similarity,
+            decayFactor,
+            daysSinceAccess: Math.floor(daysSinceAccess)
         };
     });
 
     // Sort by similarity and return top results
+    scored.sort((a, b) => b.similarity - a.similarity);
+    return scored.slice(0, limit);
+}
+
+// Clustering helper: find memories similar to a given memory
+async function findSimilarMemories(memoryId, limit = 5) {
+    // Find the memory
+    let memory = profileStmts.getMemoryById.get(memoryId);
+    let source = "profile";
+    if (!memory) {
+        memory = globalStmts.getMemoryById.get(memoryId);
+        source = "global";
+    }
+    if (!memory) return [];
+
+    const embedding = bufferToEmbedding(memory.embedding);
+    if (!embedding) return [];
+
+    // Get all memories except this one
+    const allMemories = [
+        ...profileStmts.getAllMemories.all().map(m => ({ ...m, source: "profile" })),
+        ...globalStmts.getAllMemories.all().map(m => ({ ...m, source: "global" }))
+    ].filter(m => m.id !== memoryId);
+
+    // Score by similarity
+    const scored = allMemories.map(m => {
+        const memEmb = bufferToEmbedding(m.embedding);
+        const similarity = memEmb ? cosineSimilarity(embedding, memEmb) : 0;
+        return { ...m, similarity };
+    });
+
     scored.sort((a, b) => b.similarity - a.similarity);
     return scored.slice(0, limit);
 }
@@ -334,7 +376,7 @@ async function semanticSearch(query, options = {}) {
 
 const server = new McpServer({
     name: "agent-core",
-    version: "2.0.0",
+    version: "2.1.0",
 });
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -477,7 +519,7 @@ Current profile: ${CURRENT_PROFILE}`,
         return {
             content: [{
                 type: "text",
-                text: `🚀 Task session started\n\n**Session ID**: ${id}\n**Profile**: ${CURRENT_PROFILE}\n**Task**: ${args.task_summary}\n**Current Phase**: understand\n\nRemember the workflow: understand → plan → execute → verify`
+                text: `🚀 Task session started\n\n**Session ID**: ${id}\n**Profile**: ${CURRENT_PROFILE}\n**Task**: ${args.task_summary}\n**Current Phase**: understand\n\n**Workflow**: understand → plan → execute → verify\n\n**Next Steps**:\n→ Use \`memory_search\` to check for relevant past knowledge\n→ Use \`decision_search\` to find similar past decisions\n→ Use \`checkpoint\` to log important discoveries`
             }]
         };
     }
@@ -526,10 +568,18 @@ Phases:
             verify: "✅"
         };
 
+        // Phase-specific suggestions
+        const phaseNextSteps = {
+            understand: "→ Use `memory_search` to find relevant knowledge\n→ Use `checkpoint` to log discoveries",
+            plan: "→ Use `decision_search` to check past decisions\n→ Use `decision_log` when you make choices\n→ Use `checkpoint` to document the plan",
+            execute: "→ Use `checkpoint` to track progress\n→ Use `memory_save` when you discover patterns",
+            verify: "→ Run tests and validation\n→ Use `should_continue` when done to check if you can stop"
+        };
+
         return {
             content: [{
                 type: "text",
-                text: `${phaseEmoji[args.to_phase]} Transitioned to: **${args.to_phase}**\n\n**Previous phase summary**: ${args.phase_summary}${args.blockers ? `\n\n⚠️ **Blockers noted**: ${args.blockers}` : ""}\n\n**Total checkpoints**: ${checkpoints.length}`
+                text: `${phaseEmoji[args.to_phase]} Transitioned to: **${args.to_phase}**\n\n**Previous phase summary**: ${args.phase_summary}${args.blockers ? `\n\n⚠️ **Blockers noted**: ${args.blockers}` : ""}\n\n**Total checkpoints**: ${checkpoints.length}\n\n**Next Steps**:\n${phaseNextSteps[args.to_phase]}`
             }]
         };
     }
@@ -571,10 +621,15 @@ Use this to:
 
         const importanceEmoji = { low: "📝", medium: "📌", high: "⭐" };
 
+        // Suggest memory_save for high importance discoveries
+        const suggestion = args.importance === "high"
+            ? "\n\n→ This seems important! Consider `memory_save` to persist this knowledge."
+            : "";
+
         return {
             content: [{
                 type: "text",
-                text: `${importanceEmoji[args.importance || "medium"]} Checkpoint recorded\n\n**Phase**: ${session.current_phase}\n**Note**: ${args.note}`
+                text: `${importanceEmoji[args.importance || "medium"]} Checkpoint recorded\n\n**Phase**: ${session.current_phase}\n**Note**: ${args.note}${suggestion}`
             }]
         };
     }
@@ -640,7 +695,7 @@ Be PARSIMONIOUS: only save what's genuinely useful for future work.`,
             return {
                 content: [{
                     type: "text",
-                    text: `✅ Memory saved\n\n**ID**: ${id}\n**Type**: ${args.type}\n**Category**: ${args.category}\n**Title**: ${args.title}\n**Scope**: ${scope} (${scope === "global" ? "shared" : CURRENT_PROFILE})\n**Embedding**: ${embeddingStatus}\n\nThis knowledge is now available for future sessions.`
+                    text: `✅ Memory saved\n\n**ID**: ${id}\n**Type**: ${args.type}\n**Category**: ${args.category}\n**Title**: ${args.title}\n**Scope**: ${scope} (${scope === "global" ? "shared" : CURRENT_PROFILE})\n**Embedding**: ${embeddingStatus}\n\n→ Use \`memory_search\` to verify it's findable\n→ Use \`memory_cluster\` to find related memories`
                 }]
             };
         } catch (error) {
@@ -699,7 +754,7 @@ This is your accumulated experience - use it!`,
                 return {
                     content: [{
                         type: "text",
-                        text: `No memories found for: "${args.query}"\n\nThis might be new territory - proceed with research and consider saving your findings.`
+                        text: `No memories found for: "${args.query}"\n\nThis might be new territory.\n\n→ Use \`memory_save\` after you learn something valuable\n→ Use \`memory_stats\` to see your knowledge base overview`
                     }]
                 };
             }
@@ -838,6 +893,197 @@ Use when:
 );
 
 // ───────────────────────────────────────────────────────────────────────────
+// MEMORY ANALYTICS & CLUSTERING
+// ───────────────────────────────────────────────────────────────────────────
+
+server.tool(
+    "memory_stats",
+    `Get statistics about your memory usage.
+
+Shows:
+- Total memories by type and scope
+- Most accessed memories
+- Never accessed memories (candidates for cleanup)
+- Oldest memories
+- Decay status
+
+Use this to:
+- Understand your knowledge base
+- Identify cleanup candidates
+- Track memory health
+
+→ Related tools: memory_forget (to clean up), memory_search (to explore)`,
+    {
+        scope: z.enum(["all", "profile", "global"]).optional().describe("Which memories to analyze (default: all)")
+    },
+    async (args) => {
+        const scope = args.scope || "all";
+        const nowTime = Date.now();
+
+        // Collect memories
+        let allMemories = [];
+        if (scope === "all" || scope === "profile") {
+            allMemories.push(...profileStmts.getAllMemories.all().map(m => ({ ...m, source: "profile" })));
+        }
+        if (scope === "all" || scope === "global") {
+            allMemories.push(...globalStmts.getAllMemories.all().map(m => ({ ...m, source: "global" })));
+        }
+
+        if (allMemories.length === 0) {
+            return {
+                content: [{
+                    type: "text",
+                    text: `📊 **Memory Stats** (${scope})\n\nNo memories found.\n\n→ Use \`memory_save\` to start building your knowledge base.`
+                }]
+            };
+        }
+
+        // Count by type
+        const byType = { semantic: 0, procedural: 0, episodic: 0 };
+        const bySource = { profile: 0, global: 0 };
+        let totalAccesses = 0;
+        const neverAccessed = [];
+        const decayed = [];
+
+        for (const m of allMemories) {
+            byType[m.type]++;
+            bySource[m.source]++;
+            totalAccesses += m.access_count;
+
+            if (m.access_count === 0) {
+                neverAccessed.push(m);
+            }
+
+            // Check decay
+            const lastAccess = new Date(m.last_accessed).getTime();
+            const daysSinceAccess = (nowTime - lastAccess) / (1000 * 60 * 60 * 24);
+            if (daysSinceAccess > 30 && m.access_count === 0) {
+                decayed.push({ ...m, daysSinceAccess: Math.floor(daysSinceAccess) });
+            }
+        }
+
+        // Top accessed
+        const topAccessed = [...allMemories]
+            .sort((a, b) => b.access_count - a.access_count)
+            .slice(0, 5);
+
+        // Oldest
+        const oldest = [...allMemories]
+            .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+            .slice(0, 3);
+
+        // Format output
+        let output = `📊 **Memory Stats** (${scope})\n\n`;
+        output += `**Total**: ${allMemories.length} memories\n\n`;
+
+        output += `**By Type**:\n`;
+        output += `├── semantic: ${byType.semantic} (${Math.round(byType.semantic / allMemories.length * 100)}%)\n`;
+        output += `├── procedural: ${byType.procedural} (${Math.round(byType.procedural / allMemories.length * 100)}%)\n`;
+        output += `└── episodic: ${byType.episodic} (${Math.round(byType.episodic / allMemories.length * 100)}%)\n\n`;
+
+        if (scope === "all") {
+            output += `**By Source**:\n`;
+            output += `├── profile (${CURRENT_PROFILE}): ${bySource.profile}\n`;
+            output += `└── global: ${bySource.global}\n\n`;
+        }
+
+        output += `**Top Accessed**:\n`;
+        topAccessed.forEach((m, i) => {
+            output += `${i + 1}. "${m.title}" (${m.access_count} accesses)\n`;
+        });
+
+        if (neverAccessed.length > 0) {
+            output += `\n⚠️ **Never Accessed**: ${neverAccessed.length} memories\n`;
+            neverAccessed.slice(0, 3).forEach(m => {
+                output += `   - "${m.title}" (${m.id})\n`;
+            });
+            if (neverAccessed.length > 3) {
+                output += `   ... and ${neverAccessed.length - 3} more\n`;
+            }
+            output += `\n→ Consider using \`memory_forget\` to clean up unused memories.`;
+        }
+
+        if (decayed.length > 0) {
+            output += `\n\n🕐 **Decayed** (>30 days, never accessed): ${decayed.length} memories\n`;
+            decayed.slice(0, 3).forEach(m => {
+                output += `   - "${m.title}" (${m.daysSinceAccess} days old)\n`;
+            });
+        }
+
+        return {
+            content: [{ type: "text", text: output }]
+        };
+    }
+);
+
+server.tool(
+    "memory_cluster",
+    `Find memories similar to a specific memory.
+
+Use this to:
+- Discover related knowledge
+- Identify duplicate or overlapping memories
+- Build connections between concepts
+
+→ Related tools: memory_search (for query-based search), memory_stats (for overview)`,
+    {
+        memory_id: z.string().describe("The ID of the memory to find similar memories for"),
+        limit: z.number().int().min(1).max(10).optional().describe("Maximum results (default 5)")
+    },
+    async (args) => {
+        const limit = args.limit || 5;
+
+        // Find the source memory
+        let sourceMemory = profileStmts.getMemoryById.get(args.memory_id);
+        let sourceScope = "profile";
+        if (!sourceMemory) {
+            sourceMemory = globalStmts.getMemoryById.get(args.memory_id);
+            sourceScope = "global";
+        }
+
+        if (!sourceMemory) {
+            return {
+                content: [{ type: "text", text: `❌ Memory not found: ${args.memory_id}\n\n→ Use \`memory_stats\` to see available memories.` }],
+                isError: true
+            };
+        }
+
+        const similar = await findSimilarMemories(args.memory_id, limit);
+
+        if (similar.length === 0) {
+            return {
+                content: [{
+                    type: "text",
+                    text: `🔗 **Cluster for**: "${sourceMemory.title}"\n\nNo similar memories found.\n\n→ This memory is unique in your knowledge base.`
+                }]
+            };
+        }
+
+        let output = `🔗 **Cluster for**: "${sourceMemory.title}"\n`;
+        output += `**Source**: ${sourceScope} | **Type**: ${sourceMemory.type}\n\n`;
+        output += `**Similar Memories** (${similar.length}):\n\n`;
+
+        similar.forEach((m, i) => {
+            const similarity = (m.similarity * 100).toFixed(0);
+            output += `### ${i + 1}. ${m.title}\n`;
+            output += `**Match**: ${similarity}% | **Type**: ${m.type} | **Source**: ${m.source}\n`;
+            output += `${m.content.slice(0, 150)}${m.content.length > 150 ? "..." : ""}\n\n`;
+        });
+
+        // Check for potential duplicates
+        const duplicates = similar.filter(m => m.similarity > 0.9);
+        if (duplicates.length > 0) {
+            output += `\n⚠️ **Potential duplicates** (>90% similar): ${duplicates.length}\n`;
+            output += `→ Consider using \`memory_forget\` to consolidate.`;
+        }
+
+        return {
+            content: [{ type: "text", text: output }]
+        };
+    }
+);
+
+// ───────────────────────────────────────────────────────────────────────────
 // PROFILE MANAGEMENT
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -925,7 +1171,7 @@ Use when making choices that affect:
             return {
                 content: [{
                     type: "text",
-                    text: `📋 Decision logged\n\n**ID**: ${id}\n**Profile**: ${CURRENT_PROFILE}\n**Decision**: ${args.decision}\n**Context**: ${args.context}\n**Rationale**: ${args.rationale}${args.alternatives ? `\n**Alternatives considered**: ${args.alternatives}` : ""}`
+                    text: `📋 Decision logged\n\n**ID**: ${id}\n**Profile**: ${CURRENT_PROFILE}\n**Decision**: ${args.decision}\n**Context**: ${args.context}\n**Rationale**: ${args.rationale}${args.alternatives ? `\n**Alternatives considered**: ${args.alternatives}` : ""}\n\n→ If this is a reusable pattern, also use \`memory_save\` (type: procedural) to remember it`
                 }]
             };
         } catch (error) {
