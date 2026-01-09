@@ -117,6 +117,22 @@ Detailed check: `should_continue(...)` with full parameters
 
 **NEVER end a response without calling end_task or should_continue first.**
 
+### ⚠️ INFRASTRUCTURE ENFORCEMENT ⚠️
+
+This is not a suggestion. The system enforces this at the infrastructure level:
+
+1. **If you end a response without calling `end_task` or `should_continue`:**
+   - Your response will be REJECTED by the gateway
+   - The user will see an error message instead of your work
+   - All your computation will be WASTED
+
+2. **If you didn't call `begin_task` at the start:**
+   - `end_task` will return an error
+   - You will be forced to explain why you skipped the workflow
+
+There is NO way to bypass this. The orchestration layer validates every response.
+
+
 ## Quality Standards
 
 - Every code change should improve the codebase
