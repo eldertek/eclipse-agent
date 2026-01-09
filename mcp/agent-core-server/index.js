@@ -445,12 +445,71 @@ async function findSimilarMemories(memoryId, limit = 5) {
 
 const server = new McpServer({
     name: "agent-core",
-    version: "2.2.0",
+    version: "3.0.0",
 });
 
 // ───────────────────────────────────────────────────────────────────────────
 // LOOP CONTROL
 // ───────────────────────────────────────────────────────────────────────────
+
+server.tool(
+    "end_task",
+    `Quick way to finish a task. Simpler than should_continue.
+
+Automatically builds work summary from your checkpoints.
+Just confirm what you accomplished.
+
+Use when you're done and want to wrap up quickly.`,
+    {
+        summary: z.string().describe("One line: what did you accomplish?"),
+        verified: z.boolean().optional().describe("Did you test/verify the solution? (default: true)")
+    },
+    async (args) => {
+        const session = profileStmts.getActiveSession.get();
+
+        if (!session) {
+            return {
+                content: [{
+                    type: "text",
+                    text: `⚠️ No active session. Call \`begin_task\` first next time.\n\n✅ You may stop. (No session to close)`
+                }]
+            };
+        }
+
+        // Auto-build work done from checkpoints
+        const checkpoints = JSON.parse(session.checkpoints || "[]");
+        let workDone = checkpoints.map(cp => cp.note || cp.summary).filter(Boolean);
+        workDone.push(args.summary);
+
+        // Close session
+        profileStmts.endSession.run(now(), session.id);
+
+        const verified = args.verified !== false;
+
+        let output = `✅ **Task Complete**\n\n`;
+        output += `**Session**: ${session.id}\n`;
+        output += `**Task**: ${session.task_summary}\n`;
+        output += `**Verified**: ${verified ? 'Yes' : 'No'}\n\n`;
+
+        if (workDone.length > 0) {
+            output += `**Work Done**:\n`;
+            workDone.forEach((w, i) => {
+                output += `${i + 1}. ${w}\n`;
+            });
+        }
+
+        output += `\n→ You may end your response now.`;
+
+        // Suggest memory save if significant work
+        if (checkpoints.length >= 2) {
+            output += `\n\n💡 Consider \`memory_save\` if you discovered something reusable.`;
+        }
+
+        return {
+            content: [{ type: "text", text: output }]
+        };
+    }
+);
 
 server.tool(
     "should_continue",
@@ -566,18 +625,20 @@ function analyzeStoppingRequest(args, session) {
 // ───────────────────────────────────────────────────────────────────────────
 
 server.tool(
-    "task_start",
-    `Begin tracking a new task. Call this at the start of significant work.
+    "begin_task",
+    `Start working on a task. This single tool replaces the need for multiple setup calls.
 
-This creates a session that tracks your progress through phases:
-- understand: Reading, researching, clarifying
-- plan: Formulating approach, identifying risks
-- execute: Making changes
-- verify: Testing, validating, reviewing
+Automatically:
+- Creates a tracking session
+- Searches memory for relevant knowledge
+- Finds similar past decisions
+- Returns everything you need to start
+
+Just call this ONCE at the start, then get to work.
 
 Current profile: ${CURRENT_PROFILE}`,
     {
-        task_summary: z.string().describe("What you're about to work on")
+        task_summary: z.string().describe("Brief description of what you're about to do")
     },
     async (args) => {
         const id = generateId();
@@ -591,10 +652,74 @@ Current profile: ${CURRENT_PROFILE}`,
 
         profileStmts.insertSession.run(id, timestamp, args.task_summary);
 
+        // Auto memory search
+        const memoryResults = await semanticSearch(args.task_summary, {
+            memoryTypes: ["semantic", "procedural", "episodic"],
+            limit: 3,
+            scope: "all"
+        });
+
+        // Auto decision search
+        const searchPattern = `%${args.task_summary.split(' ').slice(0, 3).join('%')}%`;
+        const decisionResults = profileStmts.searchDecisions.all(searchPattern, searchPattern, 3);
+
+        // Build output
+        let output = `🚀 **Task Started**\n\n`;
+        output += `**Session**: ${id}\n`;
+        output += `**Profile**: ${CURRENT_PROFILE}\n`;
+        output += `**Task**: ${args.task_summary}\n\n`;
+
+        // Show relevant memories
+        if (memoryResults.length > 0) {
+            output += `📚 **Relevant Knowledge** (${memoryResults.length} found):\n`;
+            memoryResults.forEach((m, i) => {
+                const similarity = m.similarity ? ` (${(m.similarity * 100).toFixed(0)}% match)` : '';
+                output += `${i + 1}. **${m.title}**${similarity}\n   ${m.content.slice(0, 100)}${m.content.length > 100 ? '...' : ''}\n`;
+            });
+            output += `\n`;
+        } else {
+            output += `📚 No relevant memories found. This might be new territory.\n\n`;
+        }
+
+        // Show relevant decisions
+        if (decisionResults.length > 0) {
+            output += `📋 **Past Decisions** (${decisionResults.length} found):\n`;
+            decisionResults.forEach((d, i) => {
+                output += `${i + 1}. ${d.decision}\n   Reason: ${d.rationale.slice(0, 80)}...\n`;
+            });
+            output += `\n`;
+        }
+
+        output += `→ Now understand the problem, then execute. Use \`checkpoint\` for important findings.`;
+
+        return {
+            content: [{ type: "text", text: output }]
+        };
+    }
+);
+
+// Keep task_start as alias for backwards compatibility
+server.tool(
+    "task_start",
+    `[DEPRECATED] Use begin_task instead. This is kept for compatibility.`,
+    {
+        task_summary: z.string().describe("What you're about to work on")
+    },
+    async (args) => {
+        const id = generateId();
+        const timestamp = now();
+
+        const active = profileStmts.getActiveSession.get();
+        if (active) {
+            profileStmts.endSession.run(timestamp, active.id);
+        }
+
+        profileStmts.insertSession.run(id, timestamp, args.task_summary);
+
         return {
             content: [{
                 type: "text",
-                text: `🚀 Task session started\n\n**Session ID**: ${id}\n**Profile**: ${CURRENT_PROFILE}\n**Task**: ${args.task_summary}\n**Current Phase**: understand\n\n**Workflow**: understand → plan → execute → verify\n\n**Next Steps**:\n→ Use \`memory_search\` to check for relevant past knowledge\n→ Use \`decision_search\` to find similar past decisions\n→ Use \`checkpoint\` to log important discoveries`
+                text: `🚀 Session started: ${id}\n\n⚠️ **Note**: Use \`begin_task\` instead - it auto-searches memory and decisions for you.`
             }]
         };
     }
