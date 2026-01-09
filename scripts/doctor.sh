@@ -123,6 +123,64 @@ else
 fi
 
 # ───────────────────────────────────────────────────────────────────────────
+# Tool Usage Stats (aggregated across all profiles)
+# ───────────────────────────────────────────────────────────────────────────
+
+echo ""
+info "Tool usage statistics (all profiles):"
+
+if [ -d "$PROFILES_DIR" ]; then
+    # Create temp file for aggregation
+    TEMP_STATS=$(mktemp)
+    
+    # Aggregate tool usage from all profile DBs
+    for db in "$PROFILES_DIR"/*/memory.db; do
+        if [ -f "$db" ]; then
+            sqlite3 "$db" "SELECT tool_name, call_count FROM tool_usage" 2>/dev/null >> "$TEMP_STATS" || true
+        fi
+    done
+    
+    if [ -s "$TEMP_STATS" ]; then
+        echo ""
+        echo "  Tool                    Calls"
+        echo "  ────────────────────────────"
+        
+        # Aggregate and sort by call count
+        awk -F'|' '{
+            tools[$1] += $2
+        } END {
+            for (t in tools) print tools[t] "|" t
+        }' "$TEMP_STATS" | sort -t'|' -k1 -nr | head -10 | while IFS='|' read -r calls tool; do
+            printf "  %-22s %5s\n" "$tool" "$calls"
+        done
+        
+        echo ""
+        
+        # Show never used tools
+        ALL_TOOLS="begin_task end_task checkpoint skill_from_session task_resume memory_save memory_search memory_update memory_forget memory_stats memory_cluster memory_compress profile_info decision_log decision_search"
+        
+        NEVER_USED=""
+        for tool in $ALL_TOOLS; do
+            if ! grep -q "^$tool|" "$TEMP_STATS" 2>/dev/null; then
+                NEVER_USED="$NEVER_USED $tool"
+            fi
+        done
+        
+        if [ -n "$NEVER_USED" ]; then
+            warn "Never used:$NEVER_USED"
+        else
+            ok "All tools have been used at least once"
+        fi
+    else
+        info "No tool usage data yet"
+    fi
+    
+    rm -f "$TEMP_STATS"
+else
+    info "No profiles directory yet"
+fi
+
+# ───────────────────────────────────────────────────────────────────────────
 # Check Embedding Model
 # ───────────────────────────────────────────────────────────────────────────
 

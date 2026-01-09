@@ -1376,76 +1376,7 @@ server.tool(
     }
 );
 
-server.tool(
-    "tool_stats",
-    `Get usage statistics for all tools. Shows which tools are used most/least to identify workflow improvements.
 
-Aggregates usage across ALL profiles (projects) for a global view of tool adoption.`,
-    {},
-    async () => {
-        // Don't track tool_stats itself to avoid recursion
-
-        const allTools = [
-            "begin_task", "end_task", "checkpoint", "skill_from_session", "task_resume",
-            "memory_save", "memory_search", "memory_update", "memory_forget",
-            "memory_stats", "memory_cluster", "memory_compress",
-            "profile_info", "decision_log", "decision_search", "tool_stats"
-        ];
-
-        // Aggregate stats from ALL profiles
-        const usageMap = {};
-        const profilesDir = path.join(BASE_DATA_DIR, "profiles");
-
-        try {
-            const profiles = fs.readdirSync(profilesDir).filter(f => {
-                const stat = fs.statSync(path.join(profilesDir, f));
-                return stat.isDirectory();
-            });
-
-            for (const profile of profiles) {
-                const dbPath = path.join(profilesDir, profile, "memory.db");
-                if (!fs.existsSync(dbPath)) continue;
-
-                try {
-                    const db = new Database(dbPath, { readonly: true });
-                    const stats = db.prepare("SELECT * FROM tool_usage").all();
-                    db.close();
-
-                    for (const s of stats) {
-                        usageMap[s.tool_name] = (usageMap[s.tool_name] || 0) + s.call_count;
-                    }
-                } catch (err) {
-                    // Skip corrupted or locked DBs
-                }
-            }
-        } catch (err) {
-            // Fallback to current profile only
-            const stats = profileStmts.getToolStats.all();
-            for (const s of stats) {
-                usageMap[s.tool_name] = s.call_count;
-            }
-        }
-
-        const result = allTools.map(name => ({
-            tool: name,
-            calls: usageMap[name] || 0
-        })).sort((a, b) => b.calls - a.calls);
-
-        const neverUsed = result.filter(r => r.calls === 0).map(r => r.tool);
-        const topUsed = result.slice(0, 5);
-
-        return {
-            content: [{
-                type: "text",
-                text: JSON.stringify({
-                    tools: result,
-                    neverUsed,
-                    topUsed: topUsed.map(t => t.tool)
-                })
-            }]
-        };
-    }
-);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // START SERVER
