@@ -454,7 +454,7 @@ const server = new McpServer({
 
 server.tool(
     "end_task",
-    `Quick way to finish a task. Simpler than should_continue.
+    `Quick way to finish a task.
 
 Automatically builds work summary from your checkpoints.
 Just confirm what you accomplished.
@@ -510,115 +510,6 @@ Use when you're done and want to wrap up quickly.`,
         };
     }
 );
-
-server.tool(
-    "should_continue",
-    `CRITICAL: You MUST call this tool EVERY TIME before you consider stopping or ending your response.
-
-This tool evaluates whether you should continue working or if stopping is justified.
-
-When to call this tool:
-- Before writing your final message
-- When you think you've completed the task
-- When you're unsure if there's more to do
-- When you feel the urge to stop
-
-The tool will analyze your work and either:
-- APPROVE: You may stop, the task is genuinely complete
-- CONTINUE: There's more work to do, keep going
-
-Never stop without calling this tool first.`,
-    {
-        task_summary: z.string().describe("Brief summary of what you were asked to do"),
-        work_done: z.string().describe("Detailed list of actions you have taken"),
-        work_remaining: z.string().optional().describe("Honest assessment: is there anything left to do?"),
-        stopping_reason: z.enum([
-            "task_complete",
-            "waiting_for_user",
-            "error_cannot_proceed",
-            "need_clarification",
-            "user_requested_stop"
-        ]).describe("Why you want to stop"),
-        confidence: z.number().min(0).max(1).optional().describe("How confident are you that stopping is correct? (0-1)"),
-        verification_done: z.boolean().optional().describe("Have you verified your changes work?")
-    },
-    async (args) => {
-        // Check if there's an active session
-        const session = profileStmts.getActiveSession.get();
-        const analysis = analyzeStoppingRequest(args, session);
-
-        // End session if stopping approved
-        if (session && args.stopping_reason === "task_complete" && !analysis.shouldContinue) {
-            profileStmts.endSession.run(now(), session.id);
-        }
-
-        return {
-            content: [{ type: "text", text: analysis.response }]
-        };
-    }
-);
-
-function analyzeStoppingRequest(args, session) {
-    const { task_summary, work_done, work_remaining, stopping_reason, confidence, verification_done } = args;
-
-    const mustContinue = [];
-
-    // CRITICAL: Check if task_start was called
-    if (stopping_reason === "task_complete" && !session) {
-        mustContinue.push("No active session found. You should have called `task_start` at the beginning of this work. Start a session now to track your progress properly.");
-    }
-
-    if (stopping_reason === "task_complete" && !verification_done) {
-        mustContinue.push("You marked the task as complete but haven't verified your changes. Run tests or validate your work first.");
-    }
-
-    if (confidence !== undefined && confidence < 1.0 && stopping_reason === "task_complete") {
-        mustContinue.push(`Your confidence is only ${(confidence * 100).toFixed(0)}%. You must be 100% confident to stop.`);
-    }
-
-    if (stopping_reason === "task_complete" && work_remaining && work_remaining.trim().length > 10) {
-        mustContinue.push(`You've identified remaining work: "${work_remaining}". Complete this before stopping.`);
-    }
-
-    if (work_done && work_done.split(/[.,\n]/).filter(s => s.trim()).length < 2) {
-        mustContinue.push("Your work summary is very short. Have you really completed the task, or just started?");
-    }
-
-    const canStop = ["waiting_for_user", "need_clarification", "user_requested_stop"];
-
-    if (canStop.includes(stopping_reason)) {
-        return {
-            shouldContinue: false,
-            response: `✅ APPROVED TO STOP\n\nReason: ${stopping_reason}\n\nYou may end your response. This is a legitimate stopping point because you need input from the user before proceeding.`
-        };
-    }
-
-    if (stopping_reason === "error_cannot_proceed") {
-        return {
-            shouldContinue: false,
-            response: `✅ APPROVED TO STOP (with error)\n\nYou've encountered a blocking error. Make sure you've:\n1. Clearly explained the error to the user\n2. Suggested potential solutions or next steps\n3. Asked for guidance if needed\n\nYou may end your response after providing this information.`
-        };
-    }
-
-    if (stopping_reason === "task_complete") {
-        if (mustContinue.length > 0) {
-            return {
-                shouldContinue: true,
-                response: `❌ DO NOT STOP - CONTINUE WORKING\n\nIssues found:\n${mustContinue.map((issue, i) => `${i + 1}. ${issue}`).join('\n')}\n\nAddress these issues before attempting to stop again. Call this tool again when you've made progress.`
-            };
-        }
-
-        return {
-            shouldContinue: false,
-            response: `✅ APPROVED TO STOP\n\nTask appears genuinely complete:\n- Task: ${task_summary}\n- Work done: ${work_done}\n- Verification: ${verification_done ? 'Yes' : 'Not specified'}\n- Confidence: ${confidence !== undefined ? (confidence * 100).toFixed(0) + '%' : 'Not specified'}\n\nYou may end your response. Good work!`
-        };
-    }
-
-    return {
-        shouldContinue: true,
-        response: `❌ CONTINUE WORKING\n\nUnknown stopping reason. Please provide a valid reason:\n- task_complete: The task is fully done\n- waiting_for_user: You need user input\n- need_clarification: The request is unclear\n- error_cannot_proceed: A blocking error occurred\n- user_requested_stop: User explicitly asked to stop\n\nContinue working or call this tool with a valid reason.`
-    };
-}
 
 // ───────────────────────────────────────────────────────────────────────────
 // PLANNING & TASK TRACKING
@@ -698,33 +589,6 @@ Current profile: ${CURRENT_PROFILE}`,
     }
 );
 
-// Keep task_start as alias for backwards compatibility
-server.tool(
-    "task_start",
-    `[DEPRECATED] Use begin_task instead. This is kept for compatibility.`,
-    {
-        task_summary: z.string().describe("What you're about to work on")
-    },
-    async (args) => {
-        const id = generateId();
-        const timestamp = now();
-
-        const active = profileStmts.getActiveSession.get();
-        if (active) {
-            profileStmts.endSession.run(timestamp, active.id);
-        }
-
-        profileStmts.insertSession.run(id, timestamp, args.task_summary);
-
-        return {
-            content: [{
-                type: "text",
-                text: `🚀 Session started: ${id}\n\n⚠️ **Note**: Use \`begin_task\` instead - it auto-searches memory and decisions for you.`
-            }]
-        };
-    }
-);
-
 server.tool(
     "task_resume",
     `Resume a previous task session.
@@ -748,7 +612,7 @@ Use this when:
                 return {
                     content: [{
                         type: "text",
-                        text: `No previous sessions found.\n\n→ Use \`task_start\` to begin a new session.`
+                        text: `No previous sessions found.\n\n→ Use \`begin_task\` to start a new session.`
                     }]
                 };
             }
@@ -804,72 +668,11 @@ Use this when:
         }
 
         output += `**Next Steps**:\n`;
-        output += `→ Continue from phase: ${session.current_phase}\n`;
         output += `→ Use \`checkpoint\` to log progress\n`;
-        output += `→ Use \`phase_transition\` when ready to move on`;
+        output += `→ Use \`end_task\` when done`;
 
         return {
             content: [{ type: "text", text: output }]
-        };
-    }
-);
-
-server.tool(
-    "phase_transition",
-    `Transition to a new phase of work. Use this to structure your approach.
-
-Phases:
-- understand: You're reading code, clarifying requirements, researching
-- plan: You've understood and are now planning the approach
-- execute: Plan is ready, you're making changes
-- verify: Changes made, you're testing and validating`,
-    {
-        to_phase: z.enum(["understand", "plan", "execute", "verify"]).describe("The phase you're transitioning to"),
-        phase_summary: z.string().describe("Summary of what you accomplished/learned in the previous phase"),
-        blockers: z.string().optional().describe("Any blockers or concerns discovered")
-    },
-    async (args) => {
-        const session = profileStmts.getActiveSession.get();
-
-        if (!session) {
-            return {
-                content: [{
-                    type: "text",
-                    text: `⚠️ No active session. Call task_start first to begin tracking.`
-                }]
-            };
-        }
-
-        const checkpoints = JSON.parse(session.checkpoints || "[]");
-        checkpoints.push({
-            phase: session.current_phase,
-            completed_at: now(),
-            summary: args.phase_summary,
-            blockers: args.blockers
-        });
-
-        profileStmts.updateSession.run(args.to_phase, JSON.stringify(checkpoints), null, session.id);
-
-        const phaseEmoji = {
-            understand: "🔍",
-            plan: "📋",
-            execute: "⚡",
-            verify: "✅"
-        };
-
-        // Phase-specific suggestions
-        const phaseNextSteps = {
-            understand: "→ Use `memory_search` to find relevant knowledge\n→ Use `checkpoint` to log discoveries",
-            plan: "→ Use `decision_search` to check past decisions\n→ Use `decision_log` when you make choices\n→ Use `checkpoint` to document the plan",
-            execute: "→ Use `checkpoint` to track progress\n→ Use `memory_save` when you discover patterns",
-            verify: "→ Run tests and validation\n→ Use `should_continue` when done to check if you can stop"
-        };
-
-        return {
-            content: [{
-                type: "text",
-                text: `${phaseEmoji[args.to_phase]} Transitioned to: **${args.to_phase}**\n\n**Previous phase summary**: ${args.phase_summary}${args.blockers ? `\n\n⚠️ **Blockers noted**: ${args.blockers}` : ""}\n\n**Total checkpoints**: ${checkpoints.length}\n\n**Next Steps**:\n${phaseNextSteps[args.to_phase]}`
-            }]
         };
     }
 );
@@ -893,7 +696,7 @@ Use this to:
             return {
                 content: [{
                     type: "text",
-                    text: `⚠️ No active session. Call task_start first.`
+                    text: `⚠️ No active session. Use \`begin_task\` first.`
                 }]
             };
         }

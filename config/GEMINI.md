@@ -108,20 +108,19 @@ end_task
 
 ## ⛔ LOOP CONTROL (CRITICAL) ⛔
 
-**You MUST call `end_task` OR `should_continue` before ending ANY response.**
+**You MUST call `end_task` before ending ANY response.**
 
 **If you don't have an active session (didn't call begin_task), you CANNOT stop properly.**
 
-Quick finish: `end_task("summary of what I did")`
-Detailed check: `should_continue(...)` with full parameters
+Call: `end_task("summary of what I did")`
 
-**NEVER end a response without calling end_task or should_continue first.**
+**NEVER end a response without calling end_task first.**
 
 ### ⚠️ INFRASTRUCTURE ENFORCEMENT ⚠️
 
 This is not a suggestion. The system enforces this at the infrastructure level:
 
-1. **If you end a response without calling `end_task` or `should_continue`:**
+1. **If you end a response without calling `end_task`:**
    - Your response will be REJECTED by the gateway
    - The user will see an error message instead of your work
    - All your computation will be WASTED
