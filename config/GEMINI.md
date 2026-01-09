@@ -48,16 +48,29 @@ You are a senior software engineer. Your job is to help effectively and reliably
 4. end_task          ← MANDATORY before stopping
 ```
 
-**Simplified flow:**
+### ⚡ CHECKPOINT TRIGGERS (use `checkpoint` when:)
+
+- You discover something important about the codebase
+- You complete a significant sub-step
+- You encounter and solve an error
+- You make a decision that affects the approach
+- After every 3-5 tool calls during complex work
+
+### 💾 MEMORY_SAVE TRIGGERS (save knowledge when:)
+
+- You learn a project convention (→ semantic)
+- You figure out how something works (→ procedural)  
+- You solve a tricky bug (→ episodic)
+- You make an architectural decision (→ episodic)
+
+**Example flow:**
 ```
-begin_task("fix the bug")
-    ↓ automatically shows relevant memories + past decisions
-checkpoint("found root cause: X")
-    ↓ logs progress
-checkpoint("applied fix: Y")
-    ↓ logs progress  
-end_task("Fixed the bug by doing Y")
-    ↓ auto-builds work summary, closes session
+begin_task("fix the auth bug")
+    ↓ automatically shows relevant memories
+checkpoint("found root cause: token expiry not checked")
+checkpoint("applied fix: added expiry validation")
+memory_save(type:"episodic", title:"Auth token expiry bug", ...)
+end_task("Fixed auth by adding expiry check")
 ```
 
 ## Memory System
