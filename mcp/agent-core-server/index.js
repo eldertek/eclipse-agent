@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 
 /**
- * Agent Core MCP Server
+ * Agent Core MCP Server v2
  * 
- * Unified MCP combining:
+ * Features:
  * - Loop Control: Prevents premature stopping
  * - Planning: Phase-based work management (understand → plan → execute → verify)
  * - Task Tracking: Checkpoints and progress logging
- * - Long-Term Memory: Persistent knowledge across sessions
+ * - Long-Term Memory: Persistent knowledge with SEMANTIC SEARCH
+ * - Multi-Profile: Isolated memory per project + global shared memory
  */
 
 const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
@@ -19,87 +20,232 @@ const fs = require("fs");
 const crypto = require("crypto");
 
 // ═══════════════════════════════════════════════════════════════════════════
-// DATABASE SETUP
+// CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-const DATA_DIR = path.join(process.env.HOME, ".gemini", "antigravity", "agent-data");
-fs.mkdirSync(DATA_DIR, { recursive: true });
+const BASE_DATA_DIR = path.join(process.env.HOME, ".gemini", "antigravity", "agent-data");
+const EMBEDDING_DIM = 384; // all-MiniLM-L6-v2 dimension
+const CACHE_DIR = path.join(BASE_DATA_DIR, ".cache", "models");
 
-const db = new Database(path.join(DATA_DIR, "agent-core.db"));
-db.pragma("journal_mode = WAL");
+// ═══════════════════════════════════════════════════════════════════════════
+// PROFILE MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════════════
 
-// Initialize schema
-db.exec(`
-  -- Long-term memory table
-  CREATE TABLE IF NOT EXISTS memories (
-    id TEXT PRIMARY KEY,
-    type TEXT NOT NULL CHECK(type IN ('semantic', 'procedural', 'episodic')),
-    category TEXT NOT NULL,
-    title TEXT NOT NULL,
-    content TEXT NOT NULL,
-    tags TEXT DEFAULT '[]',
-    confidence REAL DEFAULT 1.0,
-    source_context TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    last_accessed TEXT NOT NULL,
-    access_count INTEGER DEFAULT 0
-  );
+function getProfileName() {
+    // Priority: ENV > CWD-based detection > "global"
+    if (process.env.ECLIPSE_PROFILE) {
+        return sanitizeProfileName(process.env.ECLIPSE_PROFILE);
+    }
 
-  -- Task/Session tracking
-  CREATE TABLE IF NOT EXISTS sessions (
-    id TEXT PRIMARY KEY,
-    started_at TEXT NOT NULL,
-    current_phase TEXT DEFAULT 'understand',
-    task_summary TEXT,
-    checkpoints TEXT DEFAULT '[]',
-    ended_at TEXT
-  );
+    // Try to detect project from CWD
+    const cwd = process.cwd();
 
-  -- Decision log
-  CREATE TABLE IF NOT EXISTS decisions (
-    id TEXT PRIMARY KEY,
-    session_id TEXT,
-    decision TEXT NOT NULL,
-    context TEXT NOT NULL,
-    rationale TEXT NOT NULL,
-    alternatives TEXT,
-    outcome TEXT,
-    created_at TEXT NOT NULL
-  );
+    // Check for common project indicators
+    const projectIndicators = [
+        'package.json',
+        'Cargo.toml',
+        'go.mod',
+        'pyproject.toml',
+        'requirements.txt',
+        '.git'
+    ];
 
-  -- Indexes for performance
-  CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type);
-  CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
-  CREATE INDEX IF NOT EXISTS idx_decisions_session ON decisions(session_id);
-`);
+    for (const indicator of projectIndicators) {
+        if (fs.existsSync(path.join(cwd, indicator))) {
+            // Use directory name as profile
+            return sanitizeProfileName(path.basename(cwd));
+        }
+    }
 
-// Prepared statements
-const insertMemory = db.prepare(`
-  INSERT INTO memories (id, type, category, title, content, tags, confidence, source_context, created_at, updated_at, last_accessed)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`);
+    return "global";
+}
 
-const searchMemories = db.prepare(`
-  SELECT * FROM memories 
-  WHERE (type IN (SELECT value FROM json_each(?)) OR ? = '[]')
-    AND (title LIKE ? OR content LIKE ? OR tags LIKE ?)
-  ORDER BY access_count DESC, last_accessed DESC
-  LIMIT ?
-`);
+function sanitizeProfileName(name) {
+    return name.toLowerCase().replace(/[^a-z0-9_-]/g, '_').slice(0, 50);
+}
 
-const getMemoryById = db.prepare(`SELECT * FROM memories WHERE id = ?`);
-const updateMemory = db.prepare(`UPDATE memories SET content = ?, tags = ?, confidence = ?, updated_at = ? WHERE id = ?`);
-const deleteMemory = db.prepare(`DELETE FROM memories WHERE id = ?`);
-const incrementAccess = db.prepare(`UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE id = ?`);
+function getProfileDir(profile) {
+    const dir = path.join(BASE_DATA_DIR, "profiles", profile);
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+}
 
-const insertSession = db.prepare(`INSERT INTO sessions (id, started_at, task_summary) VALUES (?, ?, ?)`);
-const getActiveSession = db.prepare(`SELECT * FROM sessions WHERE ended_at IS NULL ORDER BY started_at DESC LIMIT 1`);
-const updateSession = db.prepare(`UPDATE sessions SET current_phase = ?, checkpoints = ?, task_summary = COALESCE(?, task_summary) WHERE id = ?`);
-const endSession = db.prepare(`UPDATE sessions SET ended_at = ? WHERE id = ?`);
+const CURRENT_PROFILE = getProfileName();
+const PROFILE_DIR = getProfileDir(CURRENT_PROFILE);
+const GLOBAL_DIR = getProfileDir("global");
 
-const insertDecision = db.prepare(`INSERT INTO decisions (id, session_id, decision, context, rationale, alternatives, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`);
-const searchDecisions = db.prepare(`SELECT * FROM decisions WHERE decision LIKE ? OR context LIKE ? ORDER BY created_at DESC LIMIT ?`);
+// ═══════════════════════════════════════════════════════════════════════════
+// DATABASE SETUP (per-profile + global)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function initDatabase(dbPath) {
+    const db = new Database(dbPath);
+    db.pragma("journal_mode = WAL");
+
+    db.exec(`
+    -- Long-term memory table with embedding support
+    CREATE TABLE IF NOT EXISTS memories (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL CHECK(type IN ('semantic', 'procedural', 'episodic')),
+      category TEXT NOT NULL,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      tags TEXT DEFAULT '[]',
+      confidence REAL DEFAULT 1.0,
+      embedding BLOB,
+      source_context TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_accessed TEXT NOT NULL,
+      access_count INTEGER DEFAULT 0
+    );
+
+    -- Task/Session tracking
+    CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      started_at TEXT NOT NULL,
+      current_phase TEXT DEFAULT 'understand',
+      task_summary TEXT,
+      checkpoints TEXT DEFAULT '[]',
+      ended_at TEXT
+    );
+
+    -- Decision log
+    CREATE TABLE IF NOT EXISTS decisions (
+      id TEXT PRIMARY KEY,
+      session_id TEXT,
+      decision TEXT NOT NULL,
+      context TEXT NOT NULL,
+      rationale TEXT NOT NULL,
+      alternatives TEXT,
+      outcome TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    -- Indexes
+    CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type);
+    CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
+    CREATE INDEX IF NOT EXISTS idx_decisions_session ON decisions(session_id);
+  `);
+
+    return db;
+}
+
+// Initialize databases
+const profileDb = initDatabase(path.join(PROFILE_DIR, "memory.db"));
+const globalDb = initDatabase(path.join(GLOBAL_DIR, "memory.db"));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EMBEDDING ENGINE (Lazy-loaded)
+// ═══════════════════════════════════════════════════════════════════════════
+
+let embeddingPipeline = null;
+let embeddingReady = false;
+let embeddingError = null;
+
+async function initEmbeddings() {
+    if (embeddingPipeline) return embeddingPipeline;
+    if (embeddingError) return null;
+
+    try {
+        // Dynamic import for ESM module
+        const { pipeline, env } = await import("@huggingface/transformers");
+
+        // Configure cache directory
+        env.cacheDir = CACHE_DIR;
+        fs.mkdirSync(CACHE_DIR, { recursive: true });
+
+        // Load the model (will download on first use, ~80MB)
+        embeddingPipeline = await pipeline(
+            "feature-extraction",
+            "Xenova/all-MiniLM-L6-v2",
+            { quantized: true }
+        );
+
+        embeddingReady = true;
+        console.error("[eclipse] Embedding model loaded: all-MiniLM-L6-v2");
+        return embeddingPipeline;
+    } catch (err) {
+        embeddingError = err;
+        console.error("[eclipse] Embedding not available, using keyword search:", err.message);
+        return null;
+    }
+}
+
+async function generateEmbedding(text) {
+    const pipe = await initEmbeddings();
+    if (!pipe) return null;
+
+    try {
+        const output = await pipe(text, { pooling: "mean", normalize: true });
+        // Convert to Float32Array
+        return new Float32Array(output.data);
+    } catch (err) {
+        console.error("[eclipse] Embedding error:", err.message);
+        return null;
+    }
+}
+
+function cosineSimilarity(a, b) {
+    if (!a || !b || a.length !== b.length) return 0;
+    let dotProduct = 0;
+    for (let i = 0; i < a.length; i++) {
+        dotProduct += a[i] * b[i];
+    }
+    return dotProduct; // Already normalized
+}
+
+function embeddingToBuffer(embedding) {
+    if (!embedding) return null;
+    return Buffer.from(embedding.buffer);
+}
+
+function bufferToEmbedding(buffer) {
+    if (!buffer) return null;
+    return new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PREPARED STATEMENTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+function prepareStatements(db) {
+    return {
+        insertMemory: db.prepare(`
+      INSERT INTO memories (id, type, category, title, content, tags, confidence, embedding, source_context, created_at, updated_at, last_accessed)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `),
+        getAllMemories: db.prepare(`SELECT * FROM memories`),
+        getMemoriesByType: db.prepare(`
+      SELECT * FROM memories 
+      WHERE type IN (SELECT value FROM json_each(?))
+    `),
+        getMemoryById: db.prepare(`SELECT * FROM memories WHERE id = ?`),
+        updateMemory: db.prepare(`UPDATE memories SET content = ?, tags = ?, confidence = ?, embedding = ?, updated_at = ? WHERE id = ?`),
+        deleteMemory: db.prepare(`DELETE FROM memories WHERE id = ?`),
+        incrementAccess: db.prepare(`UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE id = ?`),
+
+        // Fallback keyword search
+        searchKeyword: db.prepare(`
+      SELECT * FROM memories 
+      WHERE (type IN (SELECT value FROM json_each(?)) OR ? = '[]')
+        AND (title LIKE ? OR content LIKE ? OR tags LIKE ?)
+      ORDER BY access_count DESC, last_accessed DESC
+      LIMIT ?
+    `),
+
+        insertSession: db.prepare(`INSERT INTO sessions (id, started_at, task_summary) VALUES (?, ?, ?)`),
+        getActiveSession: db.prepare(`SELECT * FROM sessions WHERE ended_at IS NULL ORDER BY started_at DESC LIMIT 1`),
+        updateSession: db.prepare(`UPDATE sessions SET current_phase = ?, checkpoints = ?, task_summary = COALESCE(?, task_summary) WHERE id = ?`),
+        endSession: db.prepare(`UPDATE sessions SET ended_at = ? WHERE id = ?`),
+
+        insertDecision: db.prepare(`INSERT INTO decisions (id, session_id, decision, context, rationale, alternatives, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`),
+        searchDecisions: db.prepare(`SELECT * FROM decisions WHERE decision LIKE ? OR context LIKE ? ORDER BY created_at DESC LIMIT ?`),
+    };
+}
+
+const profileStmts = prepareStatements(profileDb);
+const globalStmts = prepareStatements(globalDb);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // UTILITIES
@@ -114,12 +260,81 @@ function now() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// SEMANTIC SEARCH
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function semanticSearch(query, options = {}) {
+    const { memoryTypes = ["semantic", "procedural", "episodic"], limit = 5, scope = "all" } = options;
+
+    // Generate query embedding
+    const queryEmbedding = await generateEmbedding(query);
+
+    // Collect memories from relevant databases
+    let allMemories = [];
+
+    if (scope === "all" || scope === "profile") {
+        const typesJson = JSON.stringify(memoryTypes);
+        const profileMemories = memoryTypes.length === 3
+            ? profileStmts.getAllMemories.all()
+            : profileStmts.getMemoriesByType.all(typesJson);
+        allMemories.push(...profileMemories.map(m => ({ ...m, source: "profile" })));
+    }
+
+    if (scope === "all" || scope === "global") {
+        const typesJson = JSON.stringify(memoryTypes);
+        const globalMemories = memoryTypes.length === 3
+            ? globalStmts.getAllMemories.all()
+            : globalStmts.getMemoriesByType.all(typesJson);
+        allMemories.push(...globalMemories.map(m => ({ ...m, source: "global" })));
+    }
+
+    // Filter by type if not all
+    if (memoryTypes.length < 3) {
+        allMemories = allMemories.filter(m => memoryTypes.includes(m.type));
+    }
+
+    // If no embeddings available, fall back to keyword search
+    if (!queryEmbedding) {
+        const searchPattern = `%${query}%`;
+        const typesJson = JSON.stringify(memoryTypes);
+
+        let results = [];
+        if (scope === "all" || scope === "profile") {
+            results.push(...profileStmts.searchKeyword.all(typesJson, typesJson.length === 3 ? "[]" : typesJson, searchPattern, searchPattern, searchPattern, limit).map(m => ({ ...m, source: "profile" })));
+        }
+        if (scope === "all" || scope === "global") {
+            results.push(...globalStmts.searchKeyword.all(typesJson, typesJson.length === 3 ? "[]" : typesJson, searchPattern, searchPattern, searchPattern, limit).map(m => ({ ...m, source: "global" })));
+        }
+
+        return results.slice(0, limit);
+    }
+
+    // Calculate similarity scores
+    const scored = allMemories.map(memory => {
+        const memoryEmbedding = bufferToEmbedding(memory.embedding);
+        const similarity = memoryEmbedding ? cosineSimilarity(queryEmbedding, memoryEmbedding) : 0;
+
+        // Boost by access count (slight preference for frequently used memories)
+        const accessBoost = Math.min(memory.access_count * 0.01, 0.1);
+
+        return {
+            ...memory,
+            similarity: similarity + accessBoost,
+        };
+    });
+
+    // Sort by similarity and return top results
+    scored.sort((a, b) => b.similarity - a.similarity);
+    return scored.slice(0, limit);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MCP SERVER
 // ═══════════════════════════════════════════════════════════════════════════
 
 const server = new McpServer({
     name: "agent-core",
-    version: "1.0.0",
+    version: "2.0.0",
 });
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -161,9 +376,9 @@ Never stop without calling this tool first.`,
         const analysis = analyzeStoppingRequest(args);
 
         // Also update session if exists
-        const session = getActiveSession.get();
+        const session = profileStmts.getActiveSession.get();
         if (session && args.stopping_reason === "task_complete" && !analysis.shouldContinue) {
-            endSession.run(now(), session.id);
+            profileStmts.endSession.run(now(), session.id);
         }
 
         return {
@@ -241,7 +456,9 @@ This creates a session that tracks your progress through phases:
 - understand: Reading, researching, clarifying
 - plan: Formulating approach, identifying risks
 - execute: Making changes
-- verify: Testing, validating, reviewing`,
+- verify: Testing, validating, reviewing
+
+Current profile: ${CURRENT_PROFILE}`,
     {
         task_summary: z.string().describe("What you're about to work on")
     },
@@ -250,17 +467,17 @@ This creates a session that tracks your progress through phases:
         const timestamp = now();
 
         // End any existing active session
-        const active = getActiveSession.get();
+        const active = profileStmts.getActiveSession.get();
         if (active) {
-            endSession.run(timestamp, active.id);
+            profileStmts.endSession.run(timestamp, active.id);
         }
 
-        insertSession.run(id, timestamp, args.task_summary);
+        profileStmts.insertSession.run(id, timestamp, args.task_summary);
 
         return {
             content: [{
                 type: "text",
-                text: `🚀 Task session started\n\n**Session ID**: ${id}\n**Task**: ${args.task_summary}\n**Current Phase**: understand\n\nRemember the workflow: understand → plan → execute → verify`
+                text: `🚀 Task session started\n\n**Session ID**: ${id}\n**Profile**: ${CURRENT_PROFILE}\n**Task**: ${args.task_summary}\n**Current Phase**: understand\n\nRemember the workflow: understand → plan → execute → verify`
             }]
         };
     }
@@ -281,7 +498,7 @@ Phases:
         blockers: z.string().optional().describe("Any blockers or concerns discovered")
     },
     async (args) => {
-        const session = getActiveSession.get();
+        const session = profileStmts.getActiveSession.get();
 
         if (!session) {
             return {
@@ -300,7 +517,7 @@ Phases:
             blockers: args.blockers
         });
 
-        updateSession.run(args.to_phase, JSON.stringify(checkpoints), null, session.id);
+        profileStmts.updateSession.run(args.to_phase, JSON.stringify(checkpoints), null, session.id);
 
         const phaseEmoji = {
             understand: "🔍",
@@ -331,7 +548,7 @@ Use this to:
         importance: z.enum(["low", "medium", "high"]).optional().describe("How significant is this checkpoint?")
     },
     async (args) => {
-        const session = getActiveSession.get();
+        const session = profileStmts.getActiveSession.get();
 
         if (!session) {
             return {
@@ -350,7 +567,7 @@ Use this to:
             importance: args.importance || "medium"
         });
 
-        updateSession.run(session.current_phase, JSON.stringify(checkpoints), null, session.id);
+        profileStmts.updateSession.run(session.current_phase, JSON.stringify(checkpoints), null, session.id);
 
         const importanceEmoji = { low: "📝", medium: "📌", high: "⭐" };
 
@@ -364,7 +581,7 @@ Use this to:
 );
 
 // ───────────────────────────────────────────────────────────────────────────
-// LONG-TERM MEMORY
+// LONG-TERM MEMORY (with Semantic Search)
 // ───────────────────────────────────────────────────────────────────────────
 
 server.tool(
@@ -376,6 +593,10 @@ Memory types:
 - procedural: How to do things, workflows, patterns, best practices
 - episodic: Past decisions, errors made, lessons learned
 
+Scope:
+- profile (default): Saved to current project (${CURRENT_PROFILE})
+- global: Saved to shared memory across all projects
+
 Be PARSIMONIOUS: only save what's genuinely useful for future work.`,
     {
         type: z.enum(["semantic", "procedural", "episodic"]).describe("Type of memory"),
@@ -383,15 +604,23 @@ Be PARSIMONIOUS: only save what's genuinely useful for future work.`,
         title: z.string().describe("Brief, searchable title"),
         content: z.string().describe("The knowledge to remember"),
         tags: z.array(z.string()).optional().describe("Tags for search"),
-        confidence: z.number().min(0).max(1).optional().describe("Confidence level (0.0-1.0), default 1.0")
+        confidence: z.number().min(0).max(1).optional().describe("Confidence level (0.0-1.0), default 1.0"),
+        scope: z.enum(["profile", "global"]).optional().describe("Where to save: profile (project-specific) or global (shared)")
     },
     async (args) => {
         const id = generateId();
         const timestamp = now();
         const tagsJson = JSON.stringify(args.tags || []);
+        const scope = args.scope || "profile";
+        const stmts = scope === "global" ? globalStmts : profileStmts;
+
+        // Generate embedding for semantic search
+        const textToEmbed = `${args.title} ${args.content} ${(args.tags || []).join(" ")}`;
+        const embedding = await generateEmbedding(textToEmbed);
+        const embeddingBuffer = embeddingToBuffer(embedding);
 
         try {
-            insertMemory.run(
+            stmts.insertMemory.run(
                 id,
                 args.type,
                 args.category,
@@ -399,16 +628,19 @@ Be PARSIMONIOUS: only save what's genuinely useful for future work.`,
                 args.content,
                 tagsJson,
                 args.confidence ?? 1.0,
+                embeddingBuffer,
                 null,
                 timestamp,
                 timestamp,
                 timestamp
             );
 
+            const embeddingStatus = embedding ? "✓ semantic search enabled" : "⚠ keyword search only";
+
             return {
                 content: [{
                     type: "text",
-                    text: `✅ Memory saved\n\n**ID**: ${id}\n**Type**: ${args.type}\n**Category**: ${args.category}\n**Title**: ${args.title}\n\nThis knowledge is now available for future sessions.`
+                    text: `✅ Memory saved\n\n**ID**: ${id}\n**Type**: ${args.type}\n**Category**: ${args.category}\n**Title**: ${args.title}\n**Scope**: ${scope} (${scope === "global" ? "shared" : CURRENT_PROFILE})\n**Embedding**: ${embeddingStatus}\n\nThis knowledge is now available for future sessions.`
                 }]
             };
         } catch (error) {
@@ -422,7 +654,9 @@ Be PARSIMONIOUS: only save what's genuinely useful for future work.`,
 
 server.tool(
     "memory_search",
-    `Search long-term memory for relevant knowledge.
+    `Search long-term memory using semantic similarity.
+
+This uses AI embeddings to find conceptually related memories, not just keyword matches.
 
 ALWAYS check memory before:
 - Making architectural decisions
@@ -430,32 +664,35 @@ ALWAYS check memory before:
 - Debugging issues that might have been seen before
 - Starting work on a new area of the codebase
 
+Scope:
+- all (default): Search both project and global memories
+- profile: Only current project (${CURRENT_PROFILE})
+- global: Only shared memories
+
 This is your accumulated experience - use it!`,
     {
         query: z.string().describe("Natural language search query"),
         memory_types: z.array(z.enum(["semantic", "procedural", "episodic"])).optional().describe("Filter by memory types (defaults to all)"),
-        limit: z.number().int().min(1).max(20).optional().describe("Maximum results (default 5)")
+        limit: z.number().int().min(1).max(20).optional().describe("Maximum results (default 5)"),
+        scope: z.enum(["all", "profile", "global"]).optional().describe("Where to search: all, profile, or global")
     },
     async (args) => {
         const types = args.memory_types || ["semantic", "procedural", "episodic"];
-        const typesJson = JSON.stringify(types);
-        const searchPattern = `%${args.query}%`;
         const limit = args.limit || 5;
+        const scope = args.scope || "all";
 
         try {
-            const results = searchMemories.all(
-                typesJson,
-                types.length === 3 ? "[]" : typesJson,
-                searchPattern,
-                searchPattern,
-                searchPattern,
-                limit
-            );
+            const results = await semanticSearch(args.query, {
+                memoryTypes: types,
+                limit,
+                scope
+            });
 
             // Update access counts
             const timestamp = now();
             for (const r of results) {
-                incrementAccess.run(timestamp, r.id);
+                const stmts = r.source === "global" ? globalStmts : profileStmts;
+                stmts.incrementAccess.run(timestamp, r.id);
             }
 
             if (results.length === 0) {
@@ -469,13 +706,16 @@ This is your accumulated experience - use it!`,
 
             const formatted = results.map((r, i) => {
                 const tags = JSON.parse(r.tags || "[]");
-                return `### ${i + 1}. ${r.title}\n**Type**: ${r.type} | **Category**: ${r.category} | **Confidence**: ${(r.confidence * 100).toFixed(0)}%\n**Tags**: ${tags.join(", ") || "none"}\n\n${r.content}`;
+                const similarityPct = r.similarity ? ` | **Match**: ${(r.similarity * 100).toFixed(0)}%` : "";
+                return `### ${i + 1}. ${r.title}\n**Type**: ${r.type} | **Category**: ${r.category} | **Source**: ${r.source}${similarityPct}\n**Tags**: ${tags.join(", ") || "none"}\n\n${r.content}`;
             }).join("\n\n---\n\n");
+
+            const searchType = embeddingReady ? "🧠 Semantic search" : "🔤 Keyword search";
 
             return {
                 content: [{
                     type: "text",
-                    text: `Found ${results.length} relevant memories:\n\n${formatted}`
+                    text: `${searchType} found ${results.length} relevant memories:\n\n${formatted}`
                 }]
             };
         } catch (error) {
@@ -494,29 +734,49 @@ server.tool(
         memory_id: z.string().describe("The ID of the memory to update"),
         content: z.string().optional().describe("New content (if updating)"),
         tags: z.array(z.string()).optional().describe("New tags (if updating)"),
-        confidence: z.number().min(0).max(1).optional().describe("Updated confidence level")
+        confidence: z.number().min(0).max(1).optional().describe("Updated confidence level"),
+        scope: z.enum(["profile", "global"]).optional().describe("Where the memory is stored")
     },
     async (args) => {
-        try {
-            const existing = getMemoryById.get(args.memory_id);
-            if (!existing) {
-                return {
-                    content: [{ type: "text", text: `❌ Memory not found: ${args.memory_id}` }],
-                    isError: true
-                };
-            }
+        // Try to find in profile first, then global
+        let stmts = profileStmts;
+        let existing = stmts.getMemoryById.get(args.memory_id);
+        let scope = "profile";
 
+        if (!existing) {
+            stmts = globalStmts;
+            existing = stmts.getMemoryById.get(args.memory_id);
+            scope = "global";
+        }
+
+        if (!existing) {
+            return {
+                content: [{ type: "text", text: `❌ Memory not found: ${args.memory_id}` }],
+                isError: true
+            };
+        }
+
+        try {
             const timestamp = now();
             const newContent = args.content ?? existing.content;
-            const newTags = JSON.stringify(args.tags ?? JSON.parse(existing.tags || "[]"));
+            const newTags = args.tags ?? JSON.parse(existing.tags || "[]");
+            const newTagsJson = JSON.stringify(newTags);
             const newConfidence = args.confidence ?? existing.confidence;
 
-            updateMemory.run(newContent, newTags, newConfidence, timestamp, args.memory_id);
+            // Regenerate embedding if content changed
+            let newEmbedding = existing.embedding;
+            if (args.content) {
+                const textToEmbed = `${existing.title} ${newContent} ${newTags.join(" ")}`;
+                const embedding = await generateEmbedding(textToEmbed);
+                newEmbedding = embeddingToBuffer(embedding);
+            }
+
+            stmts.updateMemory.run(newContent, newTagsJson, newConfidence, newEmbedding, timestamp, args.memory_id);
 
             return {
                 content: [{
                     type: "text",
-                    text: `✅ Memory updated\n\n**ID**: ${args.memory_id}\n**Title**: ${existing.title}\n**Updated at**: ${timestamp}`
+                    text: `✅ Memory updated\n\n**ID**: ${args.memory_id}\n**Title**: ${existing.title}\n**Scope**: ${scope}\n**Updated at**: ${timestamp}`
                 }]
             };
         } catch (error) {
@@ -541,21 +801,31 @@ Use when:
         reason: z.string().describe("Why this memory should be forgotten")
     },
     async (args) => {
-        try {
-            const existing = getMemoryById.get(args.memory_id);
-            if (!existing) {
-                return {
-                    content: [{ type: "text", text: `❌ Memory not found: ${args.memory_id}` }],
-                    isError: true
-                };
-            }
+        // Try to find in profile first, then global
+        let stmts = profileStmts;
+        let existing = stmts.getMemoryById.get(args.memory_id);
+        let scope = "profile";
 
-            deleteMemory.run(args.memory_id);
+        if (!existing) {
+            stmts = globalStmts;
+            existing = stmts.getMemoryById.get(args.memory_id);
+            scope = "global";
+        }
+
+        if (!existing) {
+            return {
+                content: [{ type: "text", text: `❌ Memory not found: ${args.memory_id}` }],
+                isError: true
+            };
+        }
+
+        try {
+            stmts.deleteMemory.run(args.memory_id);
 
             return {
                 content: [{
                     type: "text",
-                    text: `✅ Memory forgotten\n\n**Title**: ${existing.title}\n**Reason**: ${args.reason}`
+                    text: `✅ Memory forgotten\n\n**Title**: ${existing.title}\n**Scope**: ${scope}\n**Reason**: ${args.reason}`
                 }]
             };
         } catch (error) {
@@ -564,6 +834,56 @@ Use when:
                 isError: true
             };
         }
+    }
+);
+
+// ───────────────────────────────────────────────────────────────────────────
+// PROFILE MANAGEMENT
+// ───────────────────────────────────────────────────────────────────────────
+
+server.tool(
+    "profile_info",
+    `Get information about the current memory profile and available profiles.
+
+Profiles allow you to have separate memories for different projects.`,
+    {},
+    async () => {
+        const profilesDir = path.join(BASE_DATA_DIR, "profiles");
+        let profiles = [];
+
+        try {
+            profiles = fs.readdirSync(profilesDir).filter(f => {
+                return fs.statSync(path.join(profilesDir, f)).isDirectory();
+            });
+        } catch { }
+
+        // Count memories per profile
+        const counts = {};
+        for (const profile of profiles) {
+            try {
+                const dbPath = path.join(profilesDir, profile, "memory.db");
+                if (fs.existsSync(dbPath)) {
+                    const tempDb = new Database(dbPath, { readonly: true });
+                    const count = tempDb.prepare("SELECT COUNT(*) as count FROM memories").get();
+                    counts[profile] = count.count;
+                    tempDb.close();
+                }
+            } catch {
+                counts[profile] = "?";
+            }
+        }
+
+        const profileList = profiles.map(p => {
+            const isCurrent = p === CURRENT_PROFILE;
+            return `- ${p}: ${counts[p]} memories${isCurrent ? " ← current" : ""}`;
+        }).join("\n");
+
+        return {
+            content: [{
+                type: "text",
+                text: `📂 **Profile Information**\n\n**Current Profile**: ${CURRENT_PROFILE}\n**Detection Method**: ${process.env.ECLIPSE_PROFILE ? "ENV variable" : "auto-detected from CWD"}\n\n**Available Profiles**:\n${profileList || "None"}\n\n**Note**: Set ECLIPSE_PROFILE env var to override auto-detection.`
+            }]
+        };
     }
 );
 
@@ -588,11 +908,11 @@ Use when making choices that affect:
     },
     async (args) => {
         const id = generateId();
-        const session = getActiveSession.get();
+        const session = profileStmts.getActiveSession.get();
         const timestamp = now();
 
         try {
-            insertDecision.run(
+            profileStmts.insertDecision.run(
                 id,
                 session?.id || null,
                 args.decision,
@@ -605,7 +925,7 @@ Use when making choices that affect:
             return {
                 content: [{
                     type: "text",
-                    text: `📋 Decision logged\n\n**ID**: ${id}\n**Decision**: ${args.decision}\n**Context**: ${args.context}\n**Rationale**: ${args.rationale}${args.alternatives ? `\n**Alternatives considered**: ${args.alternatives}` : ""}`
+                    text: `📋 Decision logged\n\n**ID**: ${id}\n**Profile**: ${CURRENT_PROFILE}\n**Decision**: ${args.decision}\n**Context**: ${args.context}\n**Rationale**: ${args.rationale}${args.alternatives ? `\n**Alternatives considered**: ${args.alternatives}` : ""}`
                 }]
             };
         } catch (error) {
@@ -629,7 +949,7 @@ server.tool(
         const limit = args.limit || 5;
 
         try {
-            const results = searchDecisions.all(searchPattern, searchPattern, limit);
+            const results = profileStmts.searchDecisions.all(searchPattern, searchPattern, limit);
 
             if (results.length === 0) {
                 return {
@@ -664,9 +984,12 @@ server.tool(
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function main() {
+    // Pre-warm embedding model in background
+    initEmbeddings().catch(() => { });
+
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error("Agent Core MCP Server running (loop + planning + task + memory)");
+    console.error(`Agent Core MCP v2.0 running | Profile: ${CURRENT_PROFILE} | Semantic search: ${embeddingReady ? "ready" : "loading..."}`);
 }
 
 main().catch(console.error);

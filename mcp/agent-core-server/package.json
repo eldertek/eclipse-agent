@@ -1,7 +1,7 @@
 {
     "name": "@agent/core-server",
-    "version": "1.0.0",
-    "description": "Unified MCP server: loop control, planning, task tracking, and long-term memory",
+    "version": "2.0.0",
+    "description": "Unified MCP server: loop control, planning, task tracking, semantic memory, multi-profile",
     "main": "index.js",
     "type": "commonjs",
     "bin": {
@@ -14,7 +14,8 @@
     "dependencies": {
         "@modelcontextprotocol/sdk": "^1.0.0",
         "zod": "^3.24.0",
-        "better-sqlite3": "^11.0.0"
+        "better-sqlite3": "^11.0.0",
+        "@huggingface/transformers": "^3.0.0"
     },
     "engines": {
         "node": ">=18.0.0"

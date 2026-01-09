@@ -1,151 +1,126 @@
-# Agent Core MCP Server
+# Agent Core MCP Server v2.0
 
-MCP unifié qui combine **loop control**, **planning**, **task tracking**, et **long-term memory** en un seul serveur.
+MCP unifié avec **semantic search**, **multi-profile**, loop control, planning, et memory.
+
+## Nouvelles fonctionnalités v2.0
+
+### 🧠 Semantic Search
+- Utilise `all-MiniLM-L6-v2` pour générer des embeddings localement
+- Recherche par similarité conceptuelle, pas juste par mots-clés
+- Télécharge le modèle (~80MB) automatiquement au premier usage
+- Fallback sur recherche keyword si embeddings indisponibles
+
+### 📂 Multi-Profile
+- Mémoire isolée par projet (auto-détecté via `package.json`, `.git`, etc.)
+- Mémoire globale partagée entre tous les projets
+- Variable `ECLIPSE_PROFILE` pour override manuel
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                      agent-core-server                          │
-├─────────────────────────────────────────────────────────────────┤
-│  🔄 LOOP CONTROL                                                │
-│  └── should_continue    Décide si l'agent peut s'arrêter        │
-├─────────────────────────────────────────────────────────────────┤
-│  📋 PLANNING                                                    │
-│  ├── task_start         Démarre une session de travail          │
-│  ├── phase_transition   Transition entre phases                 │
-│  └── checkpoint         Log un point de progression             │
-├─────────────────────────────────────────────────────────────────┤
-│  🧠 MEMORY                                                      │
-│  ├── memory_save        Sauvegarde en mémoire long terme        │
-│  ├── memory_search      Recherche dans la mémoire               │
-│  ├── memory_update      Met à jour une mémoire existante        │
-│  └── memory_forget      Supprime une mémoire obsolète           │
-├─────────────────────────────────────────────────────────────────┤
-│  📝 DECISIONS                                                   │
-│  ├── decision_log       Enregistre une décision technique       │
-│  └── decision_search    Recherche des décisions passées         │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-              ~/.gemini/antigravity/agent-data/
-                     agent-core.db (SQLite)
+~/.gemini/antigravity/agent-data/
+├── profiles/
+│   ├── global/           # Mémoire partagée
+│   │   └── memory.db
+│   ├── my-project/       # Mémoire projet
+│   │   └── memory.db
+│   └── other-project/
+│       └── memory.db
+└── .cache/
+    └── models/           # Modèles HuggingFace
 ```
 
-## Phases de travail
+## 11 Outils Disponibles
 
-L'agent suit un workflow structuré :
+| Catégorie | Tool | Description |
+|-----------|------|-------------|
+| **🔄 Loop** | `should_continue` | Vérifie si l'agent peut s'arrêter |
+| **📋 Planning** | `task_start` | Démarre une session de travail |
+| | `phase_transition` | Transition entre phases |
+| | `checkpoint` | Log un point de progression |
+| **🧠 Memory** | `memory_save` | Sauvegarde avec embedding |
+| | `memory_search` | **Recherche sémantique** |
+| | `memory_update` | Met à jour une mémoire |
+| | `memory_forget` | Supprime une mémoire |
+| **📂 Profile** | `profile_info` | **Info sur le profil actuel** |
+| **📝 Decisions** | `decision_log` | Enregistre une décision |
+| | `decision_search` | Recherche des décisions |
 
-```
-understand → plan → execute → verify
-    🔍         📋       ⚡        ✅
-```
+## Scopes de mémoire
 
-1. **understand** : Lire le code, clarifier les requirements, rechercher
-2. **plan** : Formuler l'approche, identifier les risques
-3. **execute** : Appliquer les changements (minimalistes)
-4. **verify** : Tester, valider, critiquer
-
-## Types de mémoire
-
-| Type | Description | Exemples |
-|------|-------------|----------|
-| `semantic` | Connaissances factuelles | Conventions projet, architecture, préférences user |
-| `procedural` | Comment faire | Workflows, patterns, best practices |
-| `episodic` | Expériences passées | Décisions, erreurs, leçons apprises |
-
-## Installation
-
-```bash
-cd mcp/agent-core-server
-npm install
-```
-
-## Configuration MCP
-
-Dans `~/.gemini/antigravity/mcp_config.json` :
-
-```json
-{
-  "mcpServers": {
-    "core": {
-      "command": "node",
-      "args": ["/path/to/mcp/agent-core-server/index.js"]
-    }
-  }
-}
-```
+| Scope | Description |
+|-------|-------------|
+| `profile` | Mémoire du projet actuel (par défaut pour save) |
+| `global` | Mémoire partagée entre projets |
+| `all` | Recherche dans les deux (par défaut pour search) |
 
 ## Usage
 
-### Loop Control
-
+### Sauvegarder une mémoire projet-spécifique
 ```
-# L'agent DOIT appeler avant de s'arrêter
-should_continue(
-  task_summary: "Implémenter feature X",
-  work_done: "1. Analysé le code, 2. Écrit la fonction, 3. Testé",
-  stopping_reason: "task_complete",
-  confidence: 0.95,
-  verification_done: true
-)
-```
-
-### Planning
-
-```
-# Démarrer une tâche
-task_start(task_summary: "Refactorer le module auth")
-
-# Transitionner entre phases
-phase_transition(
-  to_phase: "plan",
-  phase_summary: "J'ai compris l'architecture actuelle, 3 services impliqués"
-)
-
-# Logger un checkpoint
-checkpoint(
-  note: "Token refresh fonctionne après fix du timing",
-  importance: "high"
-)
-```
-
-### Mémoire
-
-```
-# Sauvegarder une connaissance
 memory_save(
   type: "semantic",
-  category: "project-structure",
-  title: "Convention de nommage API",
-  content: "Routes: /api/v1/{resource}. Toujours pluriel. Verbs HTTP standard.",
-  tags: ["api", "convention"]
+  title: "API convention",
+  content: "Routes use /api/v1/{resource}",
+  scope: "profile"  # Défaut
 )
+```
 
-# Rechercher avant de coder
+### Sauvegarder une mémoire globale
+```
+memory_save(
+  type: "procedural",
+  title: "Git workflow",
+  content: "Always rebase before merge",
+  scope: "global"
+)
+```
+
+### Recherche sémantique
+```
 memory_search(
-  query: "convention API routes",
-  memory_types: ["semantic", "procedural"]
+  query: "comment structurer les routes API",
+  scope: "all"  # Cherche partout
 )
+# Trouve "API convention" même sans match exact de mots
 ```
 
-### Décisions
-
+### Voir le profil actuel
 ```
-# Logger une décision technique
-decision_log(
-  decision: "Utiliser JWT avec refresh token",
-  context: "Besoin d'auth stateless pour scaling horizontal",
-  rationale: "JWT permet validation sans DB hit, refresh token pour sécurité",
-  alternatives: "Session cookies (rejeté: nécessite sticky sessions)"
-)
+profile_info()
+# Output:
+# Current Profile: my-project
+# Detection Method: auto-detected from CWD
+# Available Profiles:
+# - global: 15 memories
+# - my-project: 8 memories ← current
+# - other-project: 3 memories
 ```
 
-## Persistance
+## Configuration
 
-Les données sont stockées dans `~/.gemini/antigravity/agent-data/agent-core.db` (SQLite).
+### Override de profil
+```bash
+ECLIPSE_PROFILE=custom-project gemini
+```
 
-Tables :
-- `memories` : Mémoire long terme
-- `sessions` : Sessions de travail et checkpoints
-- `decisions` : Journal des décisions techniques
+### Forcer profil global
+```bash
+ECLIPSE_PROFILE=global gemini
+```
+
+## Dépendances
+
+- `@modelcontextprotocol/sdk` - MCP protocol
+- `better-sqlite3` - Persistance
+- `@huggingface/transformers` - Embeddings locaux
+- `zod` - Validation
+
+## Premier lancement
+
+Au premier `memory_search`, le modèle `all-MiniLM-L6-v2` sera téléchargé:
+```
+[eclipse] Embedding model loaded: all-MiniLM-L6-v2
+```
+
+Note: Le téléchargement prend ~30s la première fois.
