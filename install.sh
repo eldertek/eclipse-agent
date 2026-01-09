@@ -94,32 +94,26 @@ install_mcp() {
 }
 
 # ───────────────────────────────────────────────────────────────────────────
-# Configure Antigravity
+# Configure Antigravity & Gemini CLI
 # ───────────────────────────────────────────────────────────────────────────
 
 configure_antigravity() {
-    log "Configuring Antigravity..."
+    log "Running setup scripts..."
     
-    # Create directories
-    mkdir -p "$ANTIGRAVITY_DIR"
-    mkdir -p "$ANTIGRAVITY_DIR/agent-data"
-    
-    # Copy GEMINI.md (system prompt)
-    cp "$INSTALL_DIR/config/GEMINI.md" "$GEMINI_DIR/GEMINI.md"
-    success "System prompt installed → $GEMINI_DIR/GEMINI.md"
-    
-    # Generate mcp_config.json with correct paths
-    cat > "$ANTIGRAVITY_DIR/mcp_config.json" << EOF
-{
-  "mcpServers": {
-    "core": {
-      "command": "node",
-      "args": ["$INSTALL_DIR/mcp/agent-core-server/index.js"]
-    }
-  }
-}
-EOF
-    success "MCP config installed → $ANTIGRAVITY_DIR/mcp_config.json"
+    # Run setup-antigravity.sh
+    if [ -x "$INSTALL_DIR/scripts/setup-antigravity.sh" ]; then
+        "$INSTALL_DIR/scripts/setup-antigravity.sh"
+    else
+        # Fallback if script not found (e.g., in old checkout without update)
+        error "Setup script not found: $INSTALL_DIR/scripts/setup-antigravity.sh"
+    fi
+
+    # Run setup-gemini-cli.sh
+    if [ -x "$INSTALL_DIR/scripts/setup-gemini-cli.sh" ]; then
+        "$INSTALL_DIR/scripts/setup-gemini-cli.sh"
+    else
+        error "Setup script not found: $INSTALL_DIR/scripts/setup-gemini-cli.sh"
+    fi
 }
 
 # ───────────────────────────────────────────────────────────────────────────
