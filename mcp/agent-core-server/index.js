@@ -1048,205 +1048,123 @@ Use this to:
 );
 
 server.tool(
-    "memory_cluster",
-    `Find memories similar to a specific memory.
-
-Use this to:
-- Discover related knowledge
-- Identify duplicate or overlapping memories
-- Build connections between concepts
-
-→ Related tools: memory_search (for query-based search), memory_stats (for overview)`,
-    {
-        memory_id: z.string().describe("The ID of the memory to find similar memories for"),
-        limit: z.number().int().min(1).max(10).optional().describe("Maximum results (default 5)")
-    },
-    async (args) => {
-        trackTool("memory_cluster");
-        const limit = args.limit || 5;
-
-        let sourceMemory = profileStmts.getMemoryById.get(args.memory_id);
-        let sourceScope = "profile";
-        if (!sourceMemory) {
-            sourceMemory = globalStmts.getMemoryById.get(args.memory_id);
-            sourceScope = "global";
-        }
-
-        if (!sourceMemory) {
-            return { content: [{ type: "text", text: JSON.stringify({ error: "not_found" }) }], isError: true };
-        }
-
-        const similar = await findSimilarMemories(args.memory_id, limit);
-
-        const results = similar.map(m => ({
-            id: m.id.slice(0, 8),
-            title: m.title,
-            match: Math.round(m.similarity * 100),
-            type: m.type
-        }));
-
-        return {
-            content: [{
-                type: "text",
-                text: JSON.stringify({
-                    source: sourceMemory.title,
-                    similar: results,
-                    duplicates: results.filter(r => r.match > 90).length
-                })
-            }]
-        };
-    }
-);
-
-server.tool(
-    "memory_compress",
-    `Compress and clean up memory storage.
+    "memory_maintain",
+    `Memory maintenance operations: find similar, merge duplicates, prune old memories.
 
 Operations:
-- merge: Combine highly similar memories (>90% similarity) into one
-- summarize: Shorten content of old, low-access memories
-- prune: Remove memories that haven't been accessed in N days with 0 accesses
+- find_similar: Find memories similar to a given ID (requires memory_id)
+- merge: Combine similar memories >90% into target (requires target_id)
+- prune: Remove memories with 0 accesses older than N days (default 60)
 
-Use this for:
-- Reducing memory storage
-- Removing redundant information
-- Keeping knowledge base clean
-
-→ Related tools: memory_stats (see what to clean), memory_cluster (find duplicates)`,
+→ Related tools: memory_stats (overview), memory_forget (manual delete)`,
     {
-        operation: z.enum(["merge", "summarize", "prune"]).describe("Type of compression to perform"),
+        operation: z.enum(["find_similar", "merge", "prune"]).describe("Maintenance operation"),
+        memory_id: z.string().optional().describe("For find_similar: the memory to find similar ones for"),
         target_id: z.string().optional().describe("For merge: the memory to merge others into"),
-        days_threshold: z.number().int().optional().describe("For prune: remove unused memories older than N days (default 60)"),
-        dry_run: z.boolean().optional().describe("Preview changes without applying (default true)")
+        days_threshold: z.number().int().optional().describe("For prune: days threshold (default 60)"),
+        limit: z.number().int().min(1).max(10).optional().describe("For find_similar: max results (default 5)"),
+        dry_run: z.boolean().optional().describe("Preview without applying (default true)")
     },
     async (args) => {
-        trackTool("memory_compress");
-        const dryRun = args.dry_run !== false; // Default to true for safety
+        trackTool("memory_maintain");
+        const dryRun = args.dry_run !== false;
         const nowTime = Date.now();
 
+        // FIND_SIMILAR
+        if (args.operation === "find_similar") {
+            if (!args.memory_id) {
+                return { content: [{ type: "text", text: JSON.stringify({ error: "memory_id required" }) }], isError: true };
+            }
+            const limit = args.limit || 5;
+            let sourceMemory = profileStmts.getMemoryById.get(args.memory_id);
+            if (!sourceMemory) sourceMemory = globalStmts.getMemoryById.get(args.memory_id);
+            if (!sourceMemory) {
+                return { content: [{ type: "text", text: JSON.stringify({ error: "not_found" }) }], isError: true };
+            }
+            const similar = await findSimilarMemories(args.memory_id, limit);
+            const results = similar.map(m => ({
+                id: m.id.slice(0, 8),
+                title: m.title,
+                match: Math.round(m.similarity * 100),
+                type: m.type
+            }));
+            return {
+                content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        source: sourceMemory.title,
+                        similar: results,
+                        duplicates: results.filter(r => r.match > 90).length
+                    })
+                }]
+            };
+        }
+
+        // PRUNE
         if (args.operation === "prune") {
             const threshold = args.days_threshold || 60;
-
-            // Find candidates in both dbs
             const candidates = [];
             for (const [stmts, source] of [[profileStmts, "profile"], [globalStmts, "global"]]) {
                 const memories = stmts.getAllMemories.all();
                 for (const m of memories) {
                     if (m.access_count === 0) {
                         const age = (nowTime - new Date(m.created_at).getTime()) / (1000 * 60 * 60 * 24);
-                        if (age > threshold) {
-                            candidates.push({ ...m, source, age: Math.floor(age) });
-                        }
+                        if (age > threshold) candidates.push({ ...m, source, age: Math.floor(age) });
                     }
                 }
             }
-
             if (candidates.length === 0) {
-                return {
-                    content: [{ type: "text", text: `✅ No memories to prune (threshold: ${threshold} days, 0 accesses)` }]
-                };
+                return { content: [{ type: "text", text: JSON.stringify({ status: "clean", threshold }) }] };
             }
-
-            let output = dryRun ? `🔍 **Prune Preview** (dry run)\n\n` : `🗑️ **Pruning Memories**\n\n`;
-            output += `**Threshold**: ${threshold} days, 0 accesses\n`;
-            output += `**Candidates**: ${candidates.length} memories\n\n`;
-
-            candidates.slice(0, 10).forEach((m, i) => {
-                output += `${i + 1}. "${m.title}" (${m.age} days old, ${m.source})\n`;
-            });
-
-            if (candidates.length > 10) {
-                output += `... and ${candidates.length - 10} more\n`;
-            }
-
             if (!dryRun) {
                 for (const m of candidates) {
                     const stmts = m.source === "global" ? globalStmts : profileStmts;
                     stmts.deleteMemory.run(m.id);
                 }
-                output += `\n✅ Deleted ${candidates.length} memories.`;
-            } else {
-                output += `\n→ Run with \`dry_run: false\` to apply.`;
             }
-
-            return { content: [{ type: "text", text: output }] };
+            return {
+                content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        status: dryRun ? "preview" : "pruned",
+                        count: candidates.length,
+                        threshold,
+                        samples: candidates.slice(0, 5).map(m => ({ title: m.title, age: m.age }))
+                    })
+                }]
+            };
         }
 
+        // MERGE
         if (args.operation === "merge") {
             if (!args.target_id) {
-                return {
-                    content: [{ type: "text", text: `❌ merge requires target_id\n\n→ Use \`memory_cluster\` to find similar memories first, then specify which one to keep.` }],
-                    isError: true
-                };
+                return { content: [{ type: "text", text: JSON.stringify({ error: "target_id required" }) }], isError: true };
             }
-
-            // Find similar memories to merge
             const similar = await findSimilarMemories(args.target_id, 10);
             const toMerge = similar.filter(m => m.similarity > 0.9);
-
             if (toMerge.length === 0) {
-                return {
-                    content: [{ type: "text", text: `✅ No similar memories (>90%) to merge with ${args.target_id}` }]
-                };
+                return { content: [{ type: "text", text: JSON.stringify({ status: "no_duplicates" }) }] };
             }
-
-            let output = dryRun ? `🔍 **Merge Preview** (dry run)\n\n` : `🔗 **Merging Memories**\n\n`;
-            output += `**Target**: ${args.target_id}\n`;
-            output += `**To merge**: ${toMerge.length} memories\n\n`;
-
-            toMerge.forEach((m, i) => {
-                output += `${i + 1}. "${m.title}" (${(m.similarity * 100).toFixed(0)}% similar)\n`;
-            });
-
             if (!dryRun) {
                 for (const m of toMerge) {
                     const stmts = m.source === "global" ? globalStmts : profileStmts;
                     stmts.deleteMemory.run(m.id);
                 }
-                output += `\n✅ Merged ${toMerge.length} memories into ${args.target_id}.`;
-            } else {
-                output += `\n→ Run with \`dry_run: false\` to apply.`;
             }
-
-            return { content: [{ type: "text", text: output }] };
+            return {
+                content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        status: dryRun ? "preview" : "merged",
+                        target: args.target_id,
+                        merged: toMerge.length,
+                        items: toMerge.map(m => ({ title: m.title, match: Math.round(m.similarity * 100) }))
+                    })
+                }]
+            };
         }
 
-        if (args.operation === "summarize") {
-            // Find old, low-access memories with long content
-            const candidates = [];
-            for (const [stmts, source] of [[profileStmts, "profile"], [globalStmts, "global"]]) {
-                const memories = stmts.getAllMemories.all();
-                for (const m of memories) {
-                    const age = (nowTime - new Date(m.last_accessed).getTime()) / (1000 * 60 * 60 * 24);
-                    if (age > 30 && m.content.length > 500 && m.access_count < 3) {
-                        candidates.push({ ...m, source, age: Math.floor(age) });
-                    }
-                }
-            }
-
-            if (candidates.length === 0) {
-                return {
-                    content: [{ type: "text", text: `✅ No memories need summarization\n(criteria: >30 days old, <3 accesses, >500 chars)` }]
-                };
-            }
-
-            let output = `📝 **Summarization Candidates**\n\n`;
-            output += `Found ${candidates.length} memories with long content (>500 chars), low usage (<3 accesses), older than 30 days.\n\n`;
-
-            candidates.slice(0, 5).forEach((m, i) => {
-                output += `${i + 1}. "${m.title}" (${m.content.length} chars, ${m.age} days old)\n`;
-            });
-
-            output += `\n⚠️ **Note**: Automatic summarization not implemented yet.\n`;
-            output += `→ Consider manually shortening these memories with \`memory_update\`.`;
-
-            return { content: [{ type: "text", text: output }] };
-        }
-
-        return {
-            content: [{ type: "text", text: `❌ Unknown operation: ${args.operation}` }],
-            isError: true
-        };
+        return { content: [{ type: "text", text: JSON.stringify({ error: "unknown_operation" }) }], isError: true };
     }
 );
 
