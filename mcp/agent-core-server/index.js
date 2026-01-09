@@ -469,55 +469,32 @@ Use when you're done and want to wrap up quickly.`,
 
         if (!session) {
             return {
-                content: [{
-                    type: "text",
-                    text: `⚠️ No active session. Call \`begin_task\` first next time.\n\n✅ You may stop. (No session to close)`
-                }]
+                content: [{ type: "text", text: JSON.stringify({ status: "ok", warning: "no_session" }) }]
             };
         }
 
-        // Auto-build work done from checkpoints
         const checkpoints = JSON.parse(session.checkpoints || "[]");
-        let workDone = checkpoints.map(cp => cp.note || cp.summary).filter(Boolean);
+        const workDone = checkpoints.map(cp => cp.note || cp.summary).filter(Boolean);
         workDone.push(args.summary);
 
-        // Close session
         profileStmts.endSession.run(now(), session.id);
 
-        const verified = args.verified !== false;
-
-        let output = `✅ **Task Complete**\n\n`;
-        output += `**Session**: ${session.id}\n`;
-        output += `**Task**: ${session.task_summary}\n`;
-        output += `**Verified**: ${verified ? 'Yes' : 'No'}\n\n`;
-
-        if (workDone.length > 0) {
-            output += `**Work Done**:\n`;
-            workDone.forEach((w, i) => {
-                output += `${i + 1}. ${w}\n`;
-            });
-        }
-
-        output += `\n→ You may end your response now.`;
-
-        // Smart suggestions based on work done
-        if (checkpoints.length >= 2) {
-            // Check if this looks like a technical problem solved
-            const taskLower = session.task_summary.toLowerCase();
-            const isTechnical = ['fix', 'debug', 'deploy', 'error', 'fail', 'issue', 'problem', 'bug']
-                .some(word => taskLower.includes(word));
-
-            if (isTechnical) {
-                output += `\n\n💡 **Skill detected!** You solved a technical problem.\n`;
-                output += `→ Use \`memory_save(type: "skill")\` to save this as a reusable skill\n`;
-                output += `→ Or use \`skill_from_session\` to auto-generate from checkpoints`;
-            } else {
-                output += `\n\n💡 Consider \`memory_save\` if you discovered something reusable.`;
-            }
-        }
+        const taskLower = session.task_summary.toLowerCase();
+        const isSkill = checkpoints.length >= 2 &&
+            ['fix', 'debug', 'deploy', 'error', 'fail', 'issue', 'problem', 'bug'].some(w => taskLower.includes(w));
 
         return {
-            content: [{ type: "text", text: output }]
+            content: [{
+                type: "text",
+                text: JSON.stringify({
+                    status: "complete",
+                    session: session.id.slice(0, 8),
+                    task: session.task_summary,
+                    verified: args.verified !== false,
+                    work: workDone,
+                    suggest: isSkill ? "skill_from_session" : (checkpoints.length >= 2 ? "memory_save" : null)
+                })
+            }]
         };
     }
 );
@@ -641,43 +618,30 @@ Current profile: ${CURRENT_PROFILE}`,
         // Auto decision search
         const searchPattern = `%${args.task_summary.split(' ').slice(0, 3).join('%')}%`;
         const decisionResults = profileStmts.searchDecisions.all(searchPattern, searchPattern, 3);
+        // Build JSON output
+        const memories = memoryResults.map(m => ({
+            title: m.title,
+            match: m.similarity ? Math.round(m.similarity * 100) : null,
+            preview: m.content.replace(/\n/g, ' ').slice(0, 80)
+        }));
 
-        // Build output - clean structured format
-        let output = `🚀 **Task Started**\n`;
-        output += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-        output += `📌 ${args.task_summary}\n`;
-        output += `📁 Profile: \`${CURRENT_PROFILE}\` | Session: \`${id.slice(0, 8)}\`\n`;
-        output += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-
-        // Show relevant memories - cleaner format
-        if (memoryResults.length > 0) {
-            output += `📚 **Relevant Knowledge**\n`;
-            memoryResults.forEach((m, i) => {
-                const pct = m.similarity ? `${(m.similarity * 100).toFixed(0)}%` : '?';
-                const preview = m.content.replace(/\n/g, ' ').slice(0, 80);
-                output += `\n**${i + 1}. ${m.title}** _(${pct} match)_\n`;
-                output += `   ${preview}${m.content.length > 80 ? '...' : ''}\n`;
-            });
-            output += `\n`;
-        } else {
-            output += `📚 No relevant memories. New territory.\n\n`;
-        }
-
-        // Show relevant decisions - cleaner format
-        if (decisionResults.length > 0) {
-            output += `📋 **Past Decisions**\n`;
-            decisionResults.forEach((d, i) => {
-                output += `\n**${i + 1}. ${d.decision}**\n`;
-                output += `   _${d.rationale.slice(0, 60)}..._\n`;
-            });
-            output += `\n`;
-        }
-
-        output += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-        output += `→ Use \`checkpoint\` for progress | \`end_task\` when done`;
+        const decisions = decisionResults.map(d => ({
+            decision: d.decision,
+            reason: d.rationale.slice(0, 60)
+        }));
 
         return {
-            content: [{ type: "text", text: output }]
+            content: [{
+                type: "text",
+                text: JSON.stringify({
+                    status: "started",
+                    session: id.slice(0, 8),
+                    profile: CURRENT_PROFILE,
+                    task: args.task_summary,
+                    memories: memories.length > 0 ? memories : null,
+                    decisions: decisions.length > 0 ? decisions : null
+                })
+            }]
         };
     }
 );
@@ -772,25 +736,17 @@ Use this when:
 
 server.tool(
     "checkpoint",
-    `Log a significant progress point within the current phase.
-
-Use this to:
-- Record important discoveries
-- Note decisions made
-- Track incremental progress on long tasks`,
+    `Log progress. Returns JSON.`,
     {
         note: z.string().describe("What you accomplished or discovered"),
-        importance: z.enum(["low", "medium", "high"]).optional().describe("How significant is this checkpoint?")
+        importance: z.enum(["low", "medium", "high"]).optional().describe("Significance (default: medium)")
     },
     async (args) => {
         const session = profileStmts.getActiveSession.get();
 
         if (!session) {
             return {
-                content: [{
-                    type: "text",
-                    text: `⚠️ No active session. Use \`begin_task\` first.`
-                }]
+                content: [{ type: "text", text: JSON.stringify({ error: "no_session" }) }]
             };
         }
 
@@ -804,17 +760,15 @@ Use this to:
 
         profileStmts.updateSession.run(session.current_phase, JSON.stringify(checkpoints), null, session.id);
 
-        const importanceEmoji = { low: "📝", medium: "📌", high: "⭐" };
-
-        // Suggest memory_save for high importance discoveries
-        const suggestion = args.importance === "high"
-            ? "\n\n→ This seems important! Consider `memory_save` to persist this knowledge."
-            : "";
-
         return {
             content: [{
                 type: "text",
-                text: `${importanceEmoji[args.importance || "medium"]} Checkpoint recorded\n\n**Phase**: ${session.current_phase}\n**Note**: ${args.note}${suggestion}`
+                text: JSON.stringify({
+                    status: "logged",
+                    checkpoint: checkpoints.length,
+                    note: args.note,
+                    suggest: args.importance === "high" ? "memory_save" : null
+                })
             }]
         };
     }
