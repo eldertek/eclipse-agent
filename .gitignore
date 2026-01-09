@@ -1,1 +1,23 @@
-node_modules
+# Dependencies
+node_modules/
+
+# Logs
+logs/*.log
+
+# SQLite databases (local data, not committed)
+*.db
+*.db-wal
+*.db-shm
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Backups
+*.backup.*

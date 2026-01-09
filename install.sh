@@ -12,11 +12,12 @@ set -e
 #   1. Clones the eclipse-agent repo to ~/eclipse-agent
 #   2. Installs MCP server dependencies
 #   3. Configures Antigravity (GEMINI.md + mcp_config.json)
-#   4. Sets up auto-update via cron (daily)
+#
+# To update manually: ~/eclipse-agent/scripts/update.sh
 #
 # ═══════════════════════════════════════════════════════════════════════════
 
-REPO_URL="${ECLIPSE_REPO_URL:-https://github.com/USERNAME/eclipse-agent.git}"
+REPO_URL="${ECLIPSE_REPO_URL:-https://github.com/eldertek/eclipse-agent.git}"
 INSTALL_DIR="${ECLIPSE_INSTALL_DIR:-$HOME/eclipse-agent}"
 GEMINI_DIR="$HOME/.gemini"
 ANTIGRAVITY_DIR="$GEMINI_DIR/antigravity"
@@ -122,27 +123,6 @@ EOF
 }
 
 # ───────────────────────────────────────────────────────────────────────────
-# Setup Auto-Update
-# ───────────────────────────────────────────────────────────────────────────
-
-setup_autoupdate() {
-    log "Setting up auto-update..."
-    
-    UPDATE_SCRIPT="$INSTALL_DIR/scripts/update.sh"
-    
-    # Check if cron job already exists
-    if crontab -l 2>/dev/null | grep -q "eclipse-agent/scripts/update.sh"; then
-        success "Auto-update already configured"
-        return
-    fi
-    
-    # Add daily update cron job (runs at 4 AM)
-    (crontab -l 2>/dev/null || true; echo "0 4 * * * $UPDATE_SCRIPT >> $INSTALL_DIR/logs/update.log 2>&1") | crontab -
-    
-    success "Auto-update configured (daily at 4 AM)"
-}
-
-# ───────────────────────────────────────────────────────────────────────────
 # Main
 # ───────────────────────────────────────────────────────────────────────────
 
@@ -157,7 +137,6 @@ main() {
     setup_repo
     install_mcp
     configure_antigravity
-    setup_autoupdate
     
     echo ""
     echo "═══════════════════════════════════════════════════════════════"
@@ -166,10 +145,10 @@ main() {
     echo "  Install directory:  $INSTALL_DIR"
     echo "  System prompt:      $GEMINI_DIR/GEMINI.md"
     echo "  MCP config:         $ANTIGRAVITY_DIR/mcp_config.json"
-    echo "  Auto-update:        Daily at 4 AM"
     echo ""
     echo "  To use: Start a new Gemini CLI session"
     echo "  To verify: Run '/mcp list' in Gemini CLI"
+    echo "  To update: ~/eclipse-agent/scripts/update.sh"
     echo ""
     echo "═══════════════════════════════════════════════════════════════"
     echo ""

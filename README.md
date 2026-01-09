@@ -1,179 +1,174 @@
-# Senior-Level Coding Agent Architecture
+# Eclipse Agent
 
-A minimal but powerful system for building autonomous AI coding agents with long-term intelligent memory, senior-level behavior, and self-critique capabilities.
+A minimal, powerful AI code agent framework with long-term memory, structured workflows, and auto-updating MCPs.
 
-## Philosophy
-
-> "The prompt defines HOW the agent thinks, not WHAT tools exist."
-
-This architecture separates concerns:
-- **System Prompt**: Cognitive behavior (short, stable, generic)
-- **MCPs**: Operational intelligence (modular, rich, evolvable)
-- **Memory**: Persistent knowledge (semantic, procedural, episodic)
-
-## Quick Start
-
-### 1. System Prompt (Already Installed)
-
-The system prompt is located at:
-```
-~/.gemini/GEMINI.md
-```
-
-### 2. Loop MCP (Already Configured)
-
-The loop MCP prevents the agent from stopping prematurely:
-```
-~/.gemini/antigravity/mcp_config.json
-```
-
-### 3. Verify Installation
+## Quick Install
 
 ```bash
-# Test the MCP server
-cd agent-architecture/mcp/loop-server
-npm start
+curl -fsSL https://raw.githubusercontent.com/eldertek/eclipse-agent/main/install.sh | bash
 ```
 
-## Repository Structure
+Or with custom repo:
+
+```bash
+ECLIPSE_REPO_URL=https://github.com/eldertek/eclipse-agent.git \
+curl -fsSL https://raw.githubusercontent.com/eldertek/eclipse-agent/main/install.sh | bash
+```
+
+## What It Does
+
+The installer:
+
+1. **Clones** the repo to `~/eclipse-agent`
+2. **Installs** MCP server dependencies
+3. **Configures** Antigravity/Gemini CLI:
+   - `~/.gemini/GEMINI.md` - System prompt
+   - `~/.gemini/antigravity/mcp_config.json` - MCP configuration
+4. **Sets up** daily auto-update via cron
+
+## Architecture
 
 ```
-agent-architecture/
-├── research/
-│   └── SYNTHESIS.md           # Research findings and patterns
-├── specs/
-│   ├── ARCHITECTURE.md        # System architecture overview
-│   ├── MCP_SPECIFICATIONS.md  # Detailed MCP definitions
-│   └── INTEGRATION.md         # Gemini CLI / Antigravity integration
-├── prompts/
-│   ├── SYSTEM_PROMPT.md       # Documented prompt with rationale
-│   └── system.txt             # Clean prompt ready to use
+~/eclipse-agent/
+├── install.sh              # Main installer
+├── config/
+│   └── GEMINI.md           # System prompt (→ ~/.gemini/GEMINI.md)
 ├── mcp/
-│   └── loop-server/           # ✅ IMPLEMENTED - Loop MCP server
-│       ├── index.js           # MCP server implementation
-│       ├── package.json       # Node.js dependencies
-│       └── README.md          # Usage documentation
-└── README.md
+│   └── agent-core-server/  # Unified MCP server
+│       ├── index.js        # Server implementation
+│       └── package.json    # Dependencies
+├── scripts/
+│   └── update.sh           # Auto-update script (cron)
+└── logs/
+    └── update.log          # Update history
 ```
 
-## Core Documents
+## MCP Tools
 
-### 1. Research Synthesis
-[`research/SYNTHESIS.md`](research/SYNTHESIS.md)
+The `core` MCP provides 10 tools:
 
-Comprehensive research on AI agent architecture including:
-- Three pillars of effective agents
-- Shallow vs Deep agents
-- Memory architecture patterns
-- Planning techniques (ReAct, Reflexion, ToT)
-- Context engineering principles
-- Anti-patterns to avoid
+| Category | Tool | Description |
+|----------|------|-------------|
+| **Loop** | `should_continue` | Prevents premature stopping |
+| **Planning** | `task_start` | Begin a work session |
+| | `phase_transition` | Move between phases |
+| | `checkpoint` | Log progress |
+| **Memory** | `memory_save` | Save to long-term memory |
+| | `memory_search` | Search memories |
+| | `memory_update` | Update existing memory |
+| | `memory_forget` | Delete obsolete memory |
+| **Decisions** | `decision_log` | Record technical decisions |
+| | `decision_search` | Query past decisions |
 
-### 2. System Prompt
-[`prompts/system.txt`](prompts/system.txt)
+## Workflow Phases
 
-A ~500-word cognitive prompt that establishes:
-- Core principles (Understand → Plan → Execute → Verify → Learn)
-- Decision framework
-- Cognitive style
-- Quality standards
+```
+understand → plan → execute → verify
+    🔍         📋       ⚡        ✅
+```
 
-**Key features:**
-- Does NOT list tools (MCPs self-document)
-- Does NOT contain procedures (pushes to MCPs)
-- IS stable across projects
-- IS minimal and focused
+1. **understand**: Read code, clarify requirements, research
+2. **plan**: Formulate approach, identify risks
+3. **execute**: Make minimal, surgical changes
+4. **verify**: Test, validate, self-critique
 
-### 3. MCP Specifications
-[`specs/MCP_SPECIFICATIONS.md`](specs/MCP_SPECIFICATIONS.md)
+## Memory Types
 
-Six specialized MCPs:
-| MCP | Purpose |
-|-----|---------|
-| `@memory` | Long-term knowledge persistence |
-| `@repo` | Deep codebase understanding |
-| `@test` | Verification and validation |
-| `@docs` | Documentation access |
-| `@decisions` | Technical decision logging |
-| `@workflow` | Multi-step task management |
+| Type | Description | Examples |
+|------|-------------|----------|
+| `semantic` | Facts & knowledge | Conventions, architecture, preferences |
+| `procedural` | How to do things | Workflows, patterns, best practices |
+| `episodic` | Past experiences | Decisions, errors, lessons learned |
 
-### 4. Architecture Overview
-[`specs/ARCHITECTURE.md`](specs/ARCHITECTURE.md)
+## Auto-Update
 
-System design including:
-- Component relationships
-- Cognitive flow
-- Memory decision matrix
-- MCP integration model
-- Success metrics
+The installer sets up a daily cron job (4 AM) that:
 
-### 5. Integration Guide
-[`specs/INTEGRATION.md`](specs/INTEGRATION.md)
+1. Pulls latest changes from the repo
+2. Rebuilds MCP dependencies if `package.json` changed
+3. Updates `GEMINI.md` and `mcp_config.json`
 
-Concrete recommendations for:
-- Gemini CLI configuration
-- Antigravity integration
-- Knowledge Item compatibility
-- Implementation roadmap
-- Testing strategies
+To manually update:
 
-## Key Principles
+```bash
+~/eclipse-agent/scripts/update.sh
+```
 
-### 1. Understand Before Acting
-The agent never modifies code it hasn't read. It searches memory, inspects context, and understands patterns before making changes.
+To check update logs:
 
-### 2. Plan Before Executing
-For non-trivial tasks, the agent formulates a clear approach first. It prefers minimal, surgical changes over large rewrites.
+```bash
+cat ~/eclipse-agent/logs/update.log
+```
 
-### 3. Verify After Changing
-The agent always runs tests after modifications, checks for lint errors, and self-critiques its solutions.
+## Verify Installation
 
-### 4. Learn and Remember
-When genuine insights are discovered, they're recorded. But memory is parsimonious—only truly valuable learnings are persisted.
+```bash
+# Start Gemini CLI
+gemini
 
-## Memory Architecture
+# Check MCPs
+/mcp list
 
-Three types of memory for different purposes:
+# You should see:
+# - core (10 tools)
+```
 
-| Type | Purpose | Example |
-|------|---------|---------|
-| **Semantic** | Knowledge, conventions, patterns | "This project uses camelCase" |
-| **Procedural** | Workflows, how-to guides | "To deploy: npm run build && deploy.sh" |
-| **Episodic** | Decisions, lessons learned | "Tried approach X, failed because Y" |
+## Customization
 
-Memory is parsimonious:
-- Write rarely (only significant insights)
-- Read intelligently (before making decisions)
-- Update over create (enhance existing memories)
-- Expire over accumulate (deprecate stale info)
+### Add Project Context
 
-## Implementation Priority
+Create a project-specific `.gemini/GEMINI.md`:
 
-1. **Phase 1**: System prompt + Memory MCP + Repo MCP
-2. **Phase 2**: Test MCP + Decision Log MCP
-3. **Phase 3**: Workflow MCP + Documentation MCP
-4. **Phase 4**: Memory optimization + cross-project learning
+```markdown
+<project_context>
+This is a TypeScript/Next.js project.
+Tests use Jest.
+Deploy target is Vercel.
+</project_context>
+```
 
-## Compatibility
+### Add More MCPs
 
-Designed for integration with:
-- **Gemini CLI**: As custom MCP servers + system prompt
-- **Antigravity**: Leveraging Knowledge Items + conversation history
-- **Other LLM CLI tools**: Generic MCP protocol compliance
+Edit `~/.gemini/antigravity/mcp_config.json`:
 
-## References
+```json
+{
+  "mcpServers": {
+    "core": { ... },
+    "custom": {
+      "command": "node",
+      "args": ["/path/to/your/mcp/index.js"]
+    }
+  }
+}
+```
 
-Based on research from:
-- DAIR.AI Prompt Engineering Guide
-- Deep Agents concept (DAIR.AI, LangChain Labs, Claude Code)
-- ReAct: Synergizing Reasoning and Acting
-- Reflexion: Language Agents with Verbal Reinforcement
-- Tree of Thoughts frameworks
+## Data Storage
+
+Persistent data is stored in:
+
+```
+~/.gemini/antigravity/agent-data/
+└── agent-core.db          # SQLite database (memories, sessions, decisions)
+```
+
+## Uninstall
+
+```bash
+# Remove installation
+rm -rf ~/eclipse-agent
+
+# Remove config
+rm ~/.gemini/GEMINI.md
+rm ~/.gemini/antigravity/mcp_config.json
+
+# Remove cron job
+crontab -l | grep -v eclipse-agent | crontab -
+
+# Optionally remove data
+rm -rf ~/.gemini/antigravity/agent-data
+```
 
 ## License
 
 MIT
-
----
-
-*Built for developers who want an AI agent that codes like a senior engineer: thoughtful, careful, and continuously learning.*
