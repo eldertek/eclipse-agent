@@ -642,34 +642,39 @@ Current profile: ${CURRENT_PROFILE}`,
         const searchPattern = `%${args.task_summary.split(' ').slice(0, 3).join('%')}%`;
         const decisionResults = profileStmts.searchDecisions.all(searchPattern, searchPattern, 3);
 
-        // Build output
-        let output = `🚀 **Task Started**\n\n`;
-        output += `**Session**: ${id}\n`;
-        output += `**Profile**: ${CURRENT_PROFILE}\n`;
-        output += `**Task**: ${args.task_summary}\n\n`;
+        // Build output - clean structured format
+        let output = `🚀 **Task Started**\n`;
+        output += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+        output += `📌 ${args.task_summary}\n`;
+        output += `📁 Profile: \`${CURRENT_PROFILE}\` | Session: \`${id.slice(0, 8)}\`\n`;
+        output += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-        // Show relevant memories
+        // Show relevant memories - cleaner format
         if (memoryResults.length > 0) {
-            output += `📚 **Relevant Knowledge** (${memoryResults.length} found):\n`;
+            output += `📚 **Relevant Knowledge**\n`;
             memoryResults.forEach((m, i) => {
-                const similarity = m.similarity ? ` (${(m.similarity * 100).toFixed(0)}% match)` : '';
-                output += `${i + 1}. **${m.title}**${similarity}\n   ${m.content.slice(0, 100)}${m.content.length > 100 ? '...' : ''}\n`;
+                const pct = m.similarity ? `${(m.similarity * 100).toFixed(0)}%` : '?';
+                const preview = m.content.replace(/\n/g, ' ').slice(0, 80);
+                output += `\n**${i + 1}. ${m.title}** _(${pct} match)_\n`;
+                output += `   ${preview}${m.content.length > 80 ? '...' : ''}\n`;
             });
             output += `\n`;
         } else {
-            output += `📚 No relevant memories found. This might be new territory.\n\n`;
+            output += `📚 No relevant memories. New territory.\n\n`;
         }
 
-        // Show relevant decisions
+        // Show relevant decisions - cleaner format
         if (decisionResults.length > 0) {
-            output += `📋 **Past Decisions** (${decisionResults.length} found):\n`;
+            output += `📋 **Past Decisions**\n`;
             decisionResults.forEach((d, i) => {
-                output += `${i + 1}. ${d.decision}\n   Reason: ${d.rationale.slice(0, 80)}...\n`;
+                output += `\n**${i + 1}. ${d.decision}**\n`;
+                output += `   _${d.rationale.slice(0, 60)}..._\n`;
             });
             output += `\n`;
         }
 
-        output += `→ Now understand the problem, then execute. Use \`checkpoint\` for important findings.`;
+        output += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+        output += `→ Use \`checkpoint\` for progress | \`end_task\` when done`;
 
         return {
             content: [{ type: "text", text: output }]
