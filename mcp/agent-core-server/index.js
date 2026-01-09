@@ -501,77 +501,52 @@ Use when you're done and want to wrap up quickly.`,
 
 server.tool(
     "skill_from_session",
-    `Generate a skill template from the current or recent session.
-
-Analyzes your checkpoints and creates a structured skill you can save.
-
-Use after solving a technical problem to capture the solution pattern.`,
+    `Generate skill template from session checkpoints. Returns JSON.`,
     {
-        title: z.string().optional().describe("Title for the skill (auto-generated if not provided)"),
-        session_id: z.string().optional().describe("Session ID to use (defaults to current/last session)")
+        title: z.string().optional().describe("Title (auto-generated if omitted)"),
+        session_id: z.string().optional().describe("Session ID (defaults to current/last)")
     },
     async (args) => {
-        // Get session
         let session = args.session_id
             ? profileStmts.getSessionById.get(args.session_id)
             : profileStmts.getActiveSession.get();
 
-        // If no active session, get most recent
         if (!session) {
             const recent = profileStmts.getRecentSessions.all(1);
             if (recent.length > 0) session = recent[0];
         }
 
         if (!session) {
-            return {
-                content: [{
-                    type: "text",
-                    text: `❌ No session found. Use \`begin_task\` first to track your work.`
-                }],
-                isError: true
-            };
+            return { content: [{ type: "text", text: JSON.stringify({ error: "no_session" }) }], isError: true };
         }
 
         const checkpoints = JSON.parse(session.checkpoints || "[]");
 
         if (checkpoints.length === 0) {
-            return {
-                content: [{
-                    type: "text",
-                    text: `⚠️ No checkpoints in session. Use \`checkpoint\` to log your progress before generating a skill.`
-                }]
-            };
+            return { content: [{ type: "text", text: JSON.stringify({ error: "no_checkpoints" }) }] };
         }
 
-        // Generate skill template
         const title = args.title || session.task_summary;
-        const steps = checkpoints.map((cp, i) => `${i + 1}. ${cp.note || cp.summary}`).join('\n');
+        const steps = checkpoints.map(cp => cp.note || cp.summary).filter(Boolean);
 
-        // Try to detect trigger from task summary
         const taskLower = session.task_summary.toLowerCase();
-        let trigger = "When: " + session.task_summary;
+        let trigger = session.task_summary;
         if (taskLower.includes('error') || taskLower.includes('fail')) {
-            trigger = `When: Error occurs - "${session.task_summary}"`;
-        } else if (taskLower.includes('deploy')) {
-            trigger = `When: Deployment issue - "${session.task_summary}"`;
+            trigger = `Error: ${session.task_summary}`;
         }
-
-        const skillContent = `TRIGGER: ${trigger}
-
-STEPS:
-${steps}
-
-RELATED: [Add relevant tables, commands, or files here]`;
-
-        let output = `📋 **Skill Template Generated**\n\n`;
-        output += `**Title**: ${title}\n`;
-        output += `**Based on**: ${checkpoints.length} checkpoints\n\n`;
-        output += `\`\`\`\n${skillContent}\n\`\`\`\n\n`;
-        output += `→ To save: \`memory_save(type: "skill", title: "${title}", content: "...")\`\n`;
-        output += `→ Edit the RELATED section before saving`;
 
         return {
-            content: [{ type: "text", text: output }]
+            content: [{
+                type: "text",
+                text: JSON.stringify({
+                    status: "generated",
+                    title,
+                    trigger,
+                    steps,
+                    related: null,
+                    save_with: `memory_save(type:"skill",title:"${title}",category:"skills",content:"TRIGGER:...STEPS:...RELATED:...")`
+                })
+            }]
         };
     }
 );
@@ -648,88 +623,55 @@ Current profile: ${CURRENT_PROFILE}`,
 
 server.tool(
     "task_resume",
-    `Resume a previous task session.
-
-If no session_id provided, shows recent sessions to choose from.
-If session_id provided, reopens that session with its context.
-
-Use this when:
-- Continuing work from a previous conversation
-- Picking up where you left off
-- Reviewing past work context`,
+    `Resume previous session or list recent sessions. Returns JSON.`,
     {
-        session_id: z.string().optional().describe("ID of session to resume (omit to list recent sessions)")
+        session_id: z.string().optional().describe("Session ID (omit to list recent)")
     },
     async (args) => {
-        // If no session_id, list recent sessions
         if (!args.session_id) {
             const sessions = profileStmts.getRecentSessions.all(10);
 
             if (sessions.length === 0) {
-                return {
-                    content: [{
-                        type: "text",
-                        text: `No previous sessions found.\n\n→ Use \`begin_task\` to start a new session.`
-                    }]
-                };
+                return { content: [{ type: "text", text: JSON.stringify({ sessions: [] }) }] };
             }
 
-            let output = `📋 **Recent Sessions** (${CURRENT_PROFILE})\n\n`;
-            sessions.forEach((s, i) => {
-                const checkpoints = JSON.parse(s.checkpoints || "[]");
-                const status = s.ended_at ? "completed" : "active";
-                const date = new Date(s.started_at).toLocaleDateString();
-                output += `${i + 1}. **${s.task_summary || "Untitled"}**\n`;
-                output += `   ID: \`${s.id}\` | Phase: ${s.current_phase} | ${checkpoints.length} checkpoints | ${status} | ${date}\n\n`;
-            });
+            const list = sessions.map(s => ({
+                id: s.id.slice(0, 8),
+                task: s.task_summary,
+                phase: s.current_phase,
+                checkpoints: JSON.parse(s.checkpoints || "[]").length,
+                status: s.ended_at ? "done" : "active",
+                date: new Date(s.started_at).toISOString().split('T')[0]
+            }));
 
-            output += `→ Use \`task_resume\` with a session_id to continue.`;
-
-            return {
-                content: [{ type: "text", text: output }]
-            };
+            return { content: [{ type: "text", text: JSON.stringify({ sessions: list }) }] };
         }
 
-        // Resume specific session
         const session = profileStmts.getSessionById.get(args.session_id);
 
         if (!session) {
-            return {
-                content: [{ type: "text", text: `❌ Session not found: ${args.session_id}\n\n→ Use \`task_resume\` without arguments to see available sessions.` }],
-                isError: true
-            };
+            return { content: [{ type: "text", text: JSON.stringify({ error: "not_found", id: args.session_id }) }], isError: true };
         }
 
-        // Reopen if ended
         if (session.ended_at) {
             profileStmts.reopenSession.run(args.session_id);
         }
 
-        // Parse checkpoints for context
         const checkpoints = JSON.parse(session.checkpoints || "[]");
-        const lastCheckpoints = checkpoints.slice(-3);
-
-        let output = `🔄 **Session Resumed**\n\n`;
-        output += `**ID**: ${session.id}\n`;
-        output += `**Task**: ${session.task_summary}\n`;
-        output += `**Phase**: ${session.current_phase}\n`;
-        output += `**Checkpoints**: ${checkpoints.length}\n`;
-        output += `**Started**: ${session.started_at}\n\n`;
-
-        if (lastCheckpoints.length > 0) {
-            output += `**Last ${lastCheckpoints.length} Checkpoints**:\n`;
-            lastCheckpoints.forEach((cp, i) => {
-                output += `${i + 1}. [${cp.phase}] ${cp.note || cp.summary}\n`;
-            });
-            output += `\n`;
-        }
-
-        output += `**Next Steps**:\n`;
-        output += `→ Use \`checkpoint\` to log progress\n`;
-        output += `→ Use \`end_task\` when done`;
+        const lastCheckpoints = checkpoints.slice(-3).map(cp => cp.note || cp.summary);
 
         return {
-            content: [{ type: "text", text: output }]
+            content: [{
+                type: "text",
+                text: JSON.stringify({
+                    status: "resumed",
+                    id: session.id.slice(0, 8),
+                    task: session.task_summary,
+                    phase: session.current_phase,
+                    checkpoints: checkpoints.length,
+                    last_notes: lastCheckpoints
+                })
+            }]
         };
     }
 );
@@ -843,17 +785,23 @@ Be PARSIMONIOUS: only save what's genuinely useful for future work.`,
                 timestamp
             );
 
-            const embeddingStatus = embedding ? "✓ semantic search enabled" : "⚠ keyword search only";
-
             return {
                 content: [{
                     type: "text",
-                    text: `✅ Memory saved\n\n**ID**: ${id}\n**Type**: ${args.type}\n**Category**: ${args.category}\n**Title**: ${args.title}\n**Scope**: ${scope} (${scope === "global" ? "shared" : CURRENT_PROFILE})\n**Embedding**: ${embeddingStatus}\n\n→ Use \`memory_search\` to verify it's findable\n→ Use \`memory_cluster\` to find related memories`
+                    text: JSON.stringify({
+                        status: "saved",
+                        id: id.slice(0, 8),
+                        type: args.type,
+                        category: args.category,
+                        title: args.title,
+                        scope,
+                        embedding: !!embedding
+                    })
                 }]
             };
         } catch (error) {
             return {
-                content: [{ type: "text", text: `❌ Failed to save memory: ${error.message}` }],
+                content: [{ type: "text", text: JSON.stringify({ error: error.message }) }],
                 isError: true
             };
         }
@@ -862,41 +810,21 @@ Be PARSIMONIOUS: only save what's genuinely useful for future work.`,
 
 server.tool(
     "memory_search",
-    `Search long-term memory using semantic similarity.
-
-This uses AI embeddings to find conceptually related memories, not just keyword matches.
-
-ALWAYS check memory before:
-- Making architectural decisions
-- Implementing patterns that might exist elsewhere
-- Debugging issues that might have been seen before
-- Starting work on a new area of the codebase
-
-Scope:
-- all (default): Search both project and global memories
-- profile: Only current project (${CURRENT_PROFILE})
-- global: Only shared memories
-
-This is your accumulated experience - use it!`,
+    `Search memories using semantic similarity. Returns JSON.`,
     {
-        query: z.string().describe("Natural language search query"),
-        memory_types: z.array(z.enum(["semantic", "procedural", "episodic"])).optional().describe("Filter by memory types (defaults to all)"),
-        limit: z.number().int().min(1).max(20).optional().describe("Maximum results (default 5)"),
-        scope: z.enum(["all", "profile", "global"]).optional().describe("Where to search: all, profile, or global")
+        query: z.string().describe("Search query"),
+        memory_types: z.array(z.enum(["semantic", "procedural", "episodic", "skill"])).optional().describe("Filter by types"),
+        limit: z.number().int().min(1).max(20).optional().describe("Max results (default 5)"),
+        scope: z.enum(["all", "profile", "global"]).optional().describe("Where to search")
     },
     async (args) => {
-        const types = args.memory_types || ["semantic", "procedural", "episodic"];
+        const types = args.memory_types || ["semantic", "procedural", "episodic", "skill"];
         const limit = args.limit || 5;
         const scope = args.scope || "all";
 
         try {
-            const results = await semanticSearch(args.query, {
-                memoryTypes: types,
-                limit,
-                scope
-            });
+            const results = await semanticSearch(args.query, { memoryTypes: types, limit, scope });
 
-            // Update access counts
             const timestamp = now();
             for (const r of results) {
                 const stmts = r.source === "global" ? globalStmts : profileStmts;
@@ -904,49 +832,36 @@ This is your accumulated experience - use it!`,
             }
 
             if (results.length === 0) {
-                return {
-                    content: [{
-                        type: "text",
-                        text: `No memories found for: "${args.query}"\n\nThis might be new territory.\n\n→ Use \`memory_save\` after you learn something valuable\n→ Use \`memory_stats\` to see your knowledge base overview`
-                    }]
-                };
+                return { content: [{ type: "text", text: JSON.stringify({ results: [] }) }] };
             }
 
-            const formatted = results.map((r, i) => {
-                const tags = JSON.parse(r.tags || "[]");
-                const similarityPct = r.similarity ? ` | **Match**: ${(r.similarity * 100).toFixed(0)}%` : "";
-                return `### ${i + 1}. ${r.title}\n**Type**: ${r.type} | **Category**: ${r.category} | **Source**: ${r.source}${similarityPct}\n**Tags**: ${tags.join(", ") || "none"}\n\n${r.content}`;
-            }).join("\n\n---\n\n");
+            const formatted = results.map(r => ({
+                id: r.id.slice(0, 8),
+                title: r.title,
+                type: r.type,
+                category: r.category,
+                match: r.similarity ? Math.round(r.similarity * 100) : null,
+                content: r.content.slice(0, 150),
+                source: r.source
+            }));
 
-            const searchType = embeddingReady ? "🧠 Semantic search" : "🔤 Keyword search";
-
-            return {
-                content: [{
-                    type: "text",
-                    text: `${searchType} found ${results.length} relevant memories:\n\n${formatted}`
-                }]
-            };
+            return { content: [{ type: "text", text: JSON.stringify({ results: formatted }) }] };
         } catch (error) {
-            return {
-                content: [{ type: "text", text: `❌ Search failed: ${error.message}` }],
-                isError: true
-            };
+            return { content: [{ type: "text", text: JSON.stringify({ error: error.message }) }], isError: true };
         }
     }
 );
 
 server.tool(
     "memory_update",
-    "Update an existing memory with new or corrected information",
+    "Update existing memory. Returns JSON.",
     {
-        memory_id: z.string().describe("The ID of the memory to update"),
-        content: z.string().optional().describe("New content (if updating)"),
-        tags: z.array(z.string()).optional().describe("New tags (if updating)"),
-        confidence: z.number().min(0).max(1).optional().describe("Updated confidence level"),
-        scope: z.enum(["profile", "global"]).optional().describe("Where the memory is stored")
+        memory_id: z.string().describe("Memory ID"),
+        content: z.string().optional().describe("New content"),
+        tags: z.array(z.string()).optional().describe("New tags"),
+        confidence: z.number().min(0).max(1).optional().describe("Updated confidence")
     },
     async (args) => {
-        // Try to find in profile first, then global
         let stmts = profileStmts;
         let existing = stmts.getMemoryById.get(args.memory_id);
         let scope = "profile";
@@ -958,40 +873,26 @@ server.tool(
         }
 
         if (!existing) {
-            return {
-                content: [{ type: "text", text: `❌ Memory not found: ${args.memory_id}` }],
-                isError: true
-            };
+            return { content: [{ type: "text", text: JSON.stringify({ error: "not_found", id: args.memory_id }) }], isError: true };
         }
 
         try {
             const timestamp = now();
             const newContent = args.content ?? existing.content;
             const newTags = args.tags ?? JSON.parse(existing.tags || "[]");
-            const newTagsJson = JSON.stringify(newTags);
             const newConfidence = args.confidence ?? existing.confidence;
 
-            // Regenerate embedding if content changed
             let newEmbedding = existing.embedding;
             if (args.content) {
-                const textToEmbed = `${existing.title} ${newContent} ${newTags.join(" ")}`;
-                const embedding = await generateEmbedding(textToEmbed);
+                const embedding = await generateEmbedding(`${existing.title} ${newContent} ${newTags.join(" ")}`);
                 newEmbedding = embeddingToBuffer(embedding);
             }
 
-            stmts.updateMemory.run(newContent, newTagsJson, newConfidence, newEmbedding, timestamp, args.memory_id);
+            stmts.updateMemory.run(newContent, JSON.stringify(newTags), newConfidence, newEmbedding, timestamp, args.memory_id);
 
-            return {
-                content: [{
-                    type: "text",
-                    text: `✅ Memory updated\n\n**ID**: ${args.memory_id}\n**Title**: ${existing.title}\n**Scope**: ${scope}\n**Updated at**: ${timestamp}`
-                }]
-            };
+            return { content: [{ type: "text", text: JSON.stringify({ status: "updated", id: args.memory_id.slice(0, 8), scope }) }] };
         } catch (error) {
-            return {
-                content: [{ type: "text", text: `❌ Update failed: ${error.message}` }],
-                isError: true
-            };
+            return { content: [{ type: "text", text: JSON.stringify({ error: error.message }) }], isError: true };
         }
     }
 );
