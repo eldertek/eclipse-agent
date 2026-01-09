@@ -484,10 +484,11 @@ Never stop without calling this tool first.`,
         verification_done: z.boolean().optional().describe("Have you verified your changes work?")
     },
     async (args) => {
-        const analysis = analyzeStoppingRequest(args);
-
-        // Also update session if exists
+        // Check if there's an active session
         const session = profileStmts.getActiveSession.get();
+        const analysis = analyzeStoppingRequest(args, session);
+
+        // End session if stopping approved
         if (session && args.stopping_reason === "task_complete" && !analysis.shouldContinue) {
             profileStmts.endSession.run(now(), session.id);
         }
@@ -498,10 +499,15 @@ Never stop without calling this tool first.`,
     }
 );
 
-function analyzeStoppingRequest(args) {
+function analyzeStoppingRequest(args, session) {
     const { task_summary, work_done, work_remaining, stopping_reason, confidence, verification_done } = args;
 
     const mustContinue = [];
+
+    // CRITICAL: Check if task_start was called
+    if (stopping_reason === "task_complete" && !session) {
+        mustContinue.push("No active session found. You should have called `task_start` at the beginning of this work. Start a session now to track your progress properly.");
+    }
 
     if (stopping_reason === "task_complete" && !verification_done) {
         mustContinue.push("You marked the task as complete but haven't verified your changes. Run tests or validate your work first.");
