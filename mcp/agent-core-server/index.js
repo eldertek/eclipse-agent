@@ -142,12 +142,21 @@ const globalDb = initDatabase(path.join(GLOBAL_DIR, "memory.db"));
 let embeddingPipeline = null;
 let embeddingReady = false;
 let embeddingError = null;
+let embeddingRetryCount = 0;
+const MAX_EMBEDDING_RETRIES = 3;
 
 async function initEmbeddings() {
     if (embeddingPipeline) return embeddingPipeline;
-    if (embeddingError) return null;
+
+    // Allow retry if previous attempt failed and we haven't exceeded retries
+    if (embeddingError && embeddingRetryCount >= MAX_EMBEDDING_RETRIES) {
+        return null;
+    }
 
     try {
+        embeddingRetryCount++;
+        console.error(`[eclipse] Loading embedding model (attempt ${embeddingRetryCount}/${MAX_EMBEDDING_RETRIES})...`);
+
         // Dynamic import for ESM module
         const { pipeline, env } = await import("@huggingface/transformers");
 
@@ -163,11 +172,22 @@ async function initEmbeddings() {
         );
 
         embeddingReady = true;
+        embeddingError = null;
         console.error("[eclipse] Embedding model loaded: all-MiniLM-L6-v2");
         return embeddingPipeline;
     } catch (err) {
         embeddingError = err;
-        console.error("[eclipse] Embedding not available, using keyword search:", err.message);
+        console.error(`[eclipse] Embedding attempt ${embeddingRetryCount} failed:`, err.message);
+
+        if (embeddingRetryCount < MAX_EMBEDDING_RETRIES) {
+            // Exponential backoff: 1s, 2s, 4s
+            const delay = Math.pow(2, embeddingRetryCount - 1) * 1000;
+            console.error(`[eclipse] Retrying in ${delay / 1000}s...`);
+            await new Promise(r => setTimeout(r, delay));
+            return initEmbeddings(); // Retry
+        }
+
+        console.error("[eclipse] Max retries reached, using keyword search");
         return null;
     }
 }
@@ -178,12 +198,48 @@ async function generateEmbedding(text) {
 
     try {
         const output = await pipe(text, { pooling: "mean", normalize: true });
-        // Convert to Float32Array
         return new Float32Array(output.data);
     } catch (err) {
-        console.error("[eclipse] Embedding error:", err.message);
+        console.error("[eclipse] Embedding generation error:", err.message);
+        // Reset to allow retry on next call
+        embeddingPipeline = null;
+        embeddingError = err;
         return null;
     }
+}
+
+// Auto-generate tags from content using simple keyword extraction
+function extractKeywords(text, maxTags = 5) {
+    // Common stop words to filter out
+    const stopWords = new Set([
+        'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+        'of', 'with', 'by', 'from', 'up', 'about', 'into', 'through', 'during',
+        'before', 'after', 'above', 'below', 'between', 'under', 'again',
+        'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why',
+        'how', 'all', 'each', 'few', 'more', 'most', 'other', 'some', 'such',
+        'no', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very',
+        'can', 'will', 'just', 'should', 'now', 'is', 'are', 'was', 'were',
+        'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did',
+        'this', 'that', 'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they',
+        'use', 'used', 'using', 'make', 'made', 'like', 'also', 'would', 'could'
+    ]);
+
+    // Extract words, filter, count frequency
+    const words = text.toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter(w => w.length > 3 && !stopWords.has(w));
+
+    const freq = {};
+    for (const word of words) {
+        freq[word] = (freq[word] || 0) + 1;
+    }
+
+    // Sort by frequency and return top N
+    return Object.entries(freq)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, maxTags)
+        .map(([word]) => word);
 }
 
 function cosineSimilarity(a, b) {
@@ -236,8 +292,11 @@ function prepareStatements(db) {
 
         insertSession: db.prepare(`INSERT INTO sessions (id, started_at, task_summary) VALUES (?, ?, ?)`),
         getActiveSession: db.prepare(`SELECT * FROM sessions WHERE ended_at IS NULL ORDER BY started_at DESC LIMIT 1`),
+        getRecentSessions: db.prepare(`SELECT * FROM sessions ORDER BY started_at DESC LIMIT ?`),
+        getSessionById: db.prepare(`SELECT * FROM sessions WHERE id = ?`),
         updateSession: db.prepare(`UPDATE sessions SET current_phase = ?, checkpoints = ?, task_summary = COALESCE(?, task_summary) WHERE id = ?`),
         endSession: db.prepare(`UPDATE sessions SET ended_at = ? WHERE id = ?`),
+        reopenSession: db.prepare(`UPDATE sessions SET ended_at = NULL WHERE id = ?`),
 
         insertDecision: db.prepare(`INSERT INTO decisions (id, session_id, decision, context, rationale, alternatives, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`),
         searchDecisions: db.prepare(`SELECT * FROM decisions WHERE decision LIKE ? OR context LIKE ? ORDER BY created_at DESC LIMIT ?`),
@@ -309,11 +368,18 @@ async function semanticSearch(query, options = {}) {
         return results.slice(0, limit);
     }
 
-    // Calculate similarity scores with temporal decay
+    // Calculate similarity scores with temporal decay and hybrid keyword matching
     const nowTime = Date.now();
+    const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+
     const scored = allMemories.map(memory => {
         const memoryEmbedding = bufferToEmbedding(memory.embedding);
-        const similarity = memoryEmbedding ? cosineSimilarity(queryEmbedding, memoryEmbedding) : 0;
+        const semanticSimilarity = memoryEmbedding ? cosineSimilarity(queryEmbedding, memoryEmbedding) : 0;
+
+        // Hybrid: keyword matching boost
+        const memoryText = `${memory.title} ${memory.content} ${memory.tags}`.toLowerCase();
+        const keywordMatches = queryWords.filter(w => memoryText.includes(w)).length;
+        const keywordBoost = Math.min(keywordMatches * 0.05, 0.2); // Up to 0.2 boost for keywords
 
         // Boost by access count (slight preference for frequently used memories)
         const accessBoost = Math.min(memory.access_count * 0.01, 0.1);
@@ -325,10 +391,13 @@ async function semanticSearch(query, options = {}) {
             ? Math.max(0.5, 1 - (daysSinceAccess / 60)) // Unused: decay to 0.5 over 60 days
             : Math.max(0.8, 1 - (daysSinceAccess / 180)); // Used: decay to 0.8 over 180 days
 
+        const combinedScore = (semanticSimilarity * 0.7 + keywordBoost * 0.3 + accessBoost) * decayFactor;
+
         return {
             ...memory,
-            similarity: (similarity + accessBoost) * decayFactor,
-            rawSimilarity: similarity,
+            similarity: combinedScore,
+            rawSimilarity: semanticSimilarity,
+            keywordMatches,
             decayFactor,
             daysSinceAccess: Math.floor(daysSinceAccess)
         };
@@ -376,7 +445,7 @@ async function findSimilarMemories(memoryId, limit = 5) {
 
 const server = new McpServer({
     name: "agent-core",
-    version: "2.1.0",
+    version: "2.2.0",
 });
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -526,6 +595,95 @@ Current profile: ${CURRENT_PROFILE}`,
 );
 
 server.tool(
+    "task_resume",
+    `Resume a previous task session.
+
+If no session_id provided, shows recent sessions to choose from.
+If session_id provided, reopens that session with its context.
+
+Use this when:
+- Continuing work from a previous conversation
+- Picking up where you left off
+- Reviewing past work context`,
+    {
+        session_id: z.string().optional().describe("ID of session to resume (omit to list recent sessions)")
+    },
+    async (args) => {
+        // If no session_id, list recent sessions
+        if (!args.session_id) {
+            const sessions = profileStmts.getRecentSessions.all(10);
+
+            if (sessions.length === 0) {
+                return {
+                    content: [{
+                        type: "text",
+                        text: `No previous sessions found.\n\n→ Use \`task_start\` to begin a new session.`
+                    }]
+                };
+            }
+
+            let output = `📋 **Recent Sessions** (${CURRENT_PROFILE})\n\n`;
+            sessions.forEach((s, i) => {
+                const checkpoints = JSON.parse(s.checkpoints || "[]");
+                const status = s.ended_at ? "completed" : "active";
+                const date = new Date(s.started_at).toLocaleDateString();
+                output += `${i + 1}. **${s.task_summary || "Untitled"}**\n`;
+                output += `   ID: \`${s.id}\` | Phase: ${s.current_phase} | ${checkpoints.length} checkpoints | ${status} | ${date}\n\n`;
+            });
+
+            output += `→ Use \`task_resume\` with a session_id to continue.`;
+
+            return {
+                content: [{ type: "text", text: output }]
+            };
+        }
+
+        // Resume specific session
+        const session = profileStmts.getSessionById.get(args.session_id);
+
+        if (!session) {
+            return {
+                content: [{ type: "text", text: `❌ Session not found: ${args.session_id}\n\n→ Use \`task_resume\` without arguments to see available sessions.` }],
+                isError: true
+            };
+        }
+
+        // Reopen if ended
+        if (session.ended_at) {
+            profileStmts.reopenSession.run(args.session_id);
+        }
+
+        // Parse checkpoints for context
+        const checkpoints = JSON.parse(session.checkpoints || "[]");
+        const lastCheckpoints = checkpoints.slice(-3);
+
+        let output = `🔄 **Session Resumed**\n\n`;
+        output += `**ID**: ${session.id}\n`;
+        output += `**Task**: ${session.task_summary}\n`;
+        output += `**Phase**: ${session.current_phase}\n`;
+        output += `**Checkpoints**: ${checkpoints.length}\n`;
+        output += `**Started**: ${session.started_at}\n\n`;
+
+        if (lastCheckpoints.length > 0) {
+            output += `**Last ${lastCheckpoints.length} Checkpoints**:\n`;
+            lastCheckpoints.forEach((cp, i) => {
+                output += `${i + 1}. [${cp.phase}] ${cp.note || cp.summary}\n`;
+            });
+            output += `\n`;
+        }
+
+        output += `**Next Steps**:\n`;
+        output += `→ Continue from phase: ${session.current_phase}\n`;
+        output += `→ Use \`checkpoint\` to log progress\n`;
+        output += `→ Use \`phase_transition\` when ready to move on`;
+
+        return {
+            content: [{ type: "text", text: output }]
+        };
+    }
+);
+
+server.tool(
     "phase_transition",
     `Transition to a new phase of work. Use this to structure your approach.
 
@@ -665,12 +823,18 @@ Be PARSIMONIOUS: only save what's genuinely useful for future work.`,
     async (args) => {
         const id = generateId();
         const timestamp = now();
-        const tagsJson = JSON.stringify(args.tags || []);
         const scope = args.scope || "profile";
         const stmts = scope === "global" ? globalStmts : profileStmts;
 
+        // Auto-generate tags if not provided
+        let tags = args.tags || [];
+        if (tags.length === 0) {
+            tags = extractKeywords(`${args.title} ${args.content}`, 5);
+        }
+        const tagsJson = JSON.stringify(tags);
+
         // Generate embedding for semantic search
-        const textToEmbed = `${args.title} ${args.content} ${(args.tags || []).join(" ")}`;
+        const textToEmbed = `${args.title} ${args.content} ${tags.join(" ")}`;
         const embedding = await generateEmbedding(textToEmbed);
         const embeddingBuffer = embeddingToBuffer(embedding);
 
@@ -1079,6 +1243,157 @@ Use this to:
 
         return {
             content: [{ type: "text", text: output }]
+        };
+    }
+);
+
+server.tool(
+    "memory_compress",
+    `Compress and clean up memory storage.
+
+Operations:
+- merge: Combine highly similar memories (>90% similarity) into one
+- summarize: Shorten content of old, low-access memories
+- prune: Remove memories that haven't been accessed in N days with 0 accesses
+
+Use this for:
+- Reducing memory storage
+- Removing redundant information
+- Keeping knowledge base clean
+
+→ Related tools: memory_stats (see what to clean), memory_cluster (find duplicates)`,
+    {
+        operation: z.enum(["merge", "summarize", "prune"]).describe("Type of compression to perform"),
+        target_id: z.string().optional().describe("For merge: the memory to merge others into"),
+        days_threshold: z.number().int().optional().describe("For prune: remove unused memories older than N days (default 60)"),
+        dry_run: z.boolean().optional().describe("Preview changes without applying (default true)")
+    },
+    async (args) => {
+        const dryRun = args.dry_run !== false; // Default to true for safety
+        const nowTime = Date.now();
+
+        if (args.operation === "prune") {
+            const threshold = args.days_threshold || 60;
+
+            // Find candidates in both dbs
+            const candidates = [];
+            for (const [stmts, source] of [[profileStmts, "profile"], [globalStmts, "global"]]) {
+                const memories = stmts.getAllMemories.all();
+                for (const m of memories) {
+                    if (m.access_count === 0) {
+                        const age = (nowTime - new Date(m.created_at).getTime()) / (1000 * 60 * 60 * 24);
+                        if (age > threshold) {
+                            candidates.push({ ...m, source, age: Math.floor(age) });
+                        }
+                    }
+                }
+            }
+
+            if (candidates.length === 0) {
+                return {
+                    content: [{ type: "text", text: `✅ No memories to prune (threshold: ${threshold} days, 0 accesses)` }]
+                };
+            }
+
+            let output = dryRun ? `🔍 **Prune Preview** (dry run)\n\n` : `🗑️ **Pruning Memories**\n\n`;
+            output += `**Threshold**: ${threshold} days, 0 accesses\n`;
+            output += `**Candidates**: ${candidates.length} memories\n\n`;
+
+            candidates.slice(0, 10).forEach((m, i) => {
+                output += `${i + 1}. "${m.title}" (${m.age} days old, ${m.source})\n`;
+            });
+
+            if (candidates.length > 10) {
+                output += `... and ${candidates.length - 10} more\n`;
+            }
+
+            if (!dryRun) {
+                for (const m of candidates) {
+                    const stmts = m.source === "global" ? globalStmts : profileStmts;
+                    stmts.deleteMemory.run(m.id);
+                }
+                output += `\n✅ Deleted ${candidates.length} memories.`;
+            } else {
+                output += `\n→ Run with \`dry_run: false\` to apply.`;
+            }
+
+            return { content: [{ type: "text", text: output }] };
+        }
+
+        if (args.operation === "merge") {
+            if (!args.target_id) {
+                return {
+                    content: [{ type: "text", text: `❌ merge requires target_id\n\n→ Use \`memory_cluster\` to find similar memories first, then specify which one to keep.` }],
+                    isError: true
+                };
+            }
+
+            // Find similar memories to merge
+            const similar = await findSimilarMemories(args.target_id, 10);
+            const toMerge = similar.filter(m => m.similarity > 0.9);
+
+            if (toMerge.length === 0) {
+                return {
+                    content: [{ type: "text", text: `✅ No similar memories (>90%) to merge with ${args.target_id}` }]
+                };
+            }
+
+            let output = dryRun ? `🔍 **Merge Preview** (dry run)\n\n` : `🔗 **Merging Memories**\n\n`;
+            output += `**Target**: ${args.target_id}\n`;
+            output += `**To merge**: ${toMerge.length} memories\n\n`;
+
+            toMerge.forEach((m, i) => {
+                output += `${i + 1}. "${m.title}" (${(m.similarity * 100).toFixed(0)}% similar)\n`;
+            });
+
+            if (!dryRun) {
+                for (const m of toMerge) {
+                    const stmts = m.source === "global" ? globalStmts : profileStmts;
+                    stmts.deleteMemory.run(m.id);
+                }
+                output += `\n✅ Merged ${toMerge.length} memories into ${args.target_id}.`;
+            } else {
+                output += `\n→ Run with \`dry_run: false\` to apply.`;
+            }
+
+            return { content: [{ type: "text", text: output }] };
+        }
+
+        if (args.operation === "summarize") {
+            // Find old, low-access memories with long content
+            const candidates = [];
+            for (const [stmts, source] of [[profileStmts, "profile"], [globalStmts, "global"]]) {
+                const memories = stmts.getAllMemories.all();
+                for (const m of memories) {
+                    const age = (nowTime - new Date(m.last_accessed).getTime()) / (1000 * 60 * 60 * 24);
+                    if (age > 30 && m.content.length > 500 && m.access_count < 3) {
+                        candidates.push({ ...m, source, age: Math.floor(age) });
+                    }
+                }
+            }
+
+            if (candidates.length === 0) {
+                return {
+                    content: [{ type: "text", text: `✅ No memories need summarization\n(criteria: >30 days old, <3 accesses, >500 chars)` }]
+                };
+            }
+
+            let output = `📝 **Summarization Candidates**\n\n`;
+            output += `Found ${candidates.length} memories with long content (>500 chars), low usage (<3 accesses), older than 30 days.\n\n`;
+
+            candidates.slice(0, 5).forEach((m, i) => {
+                output += `${i + 1}. "${m.title}" (${m.content.length} chars, ${m.age} days old)\n`;
+            });
+
+            output += `\n⚠️ **Note**: Automatic summarization not implemented yet.\n`;
+            output += `→ Consider manually shortening these memories with \`memory_update\`.`;
+
+            return { content: [{ type: "text", text: output }] };
+        }
+
+        return {
+            content: [{ type: "text", text: `❌ Unknown operation: ${args.operation}` }],
+            isError: true
         };
     }
 );
