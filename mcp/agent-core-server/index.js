@@ -901,6 +901,7 @@ server.tool(
         confidence: z.number().min(0).max(1).optional().describe("Updated confidence")
     },
     async (args) => {
+        trackTool("memory_update");
         let stmts = profileStmts;
         let existing = stmts.getMemoryById.get(args.memory_id);
         let scope = "profile";
@@ -949,6 +950,7 @@ Use when:
         reason: z.string().describe("Why this memory should be forgotten")
     },
     async (args) => {
+        trackTool("memory_forget");
         let stmts = profileStmts;
         let existing = stmts.getMemoryById.get(args.memory_id);
         let scope = "profile";
@@ -997,6 +999,7 @@ Use this to:
         scope: z.enum(["all", "profile", "global"]).optional().describe("Which memories to analyze (default: all)")
     },
     async (args) => {
+        trackTool("memory_stats");
         const scope = args.scope || "all";
         const nowTime = Date.now();
 
@@ -1054,6 +1057,7 @@ Use this to:
         limit: z.number().int().min(1).max(10).optional().describe("Maximum results (default 5)")
     },
     async (args) => {
+        trackTool("memory_cluster");
         const limit = args.limit || 5;
 
         let sourceMemory = profileStmts.getMemoryById.get(args.memory_id);
@@ -1111,6 +1115,7 @@ Use this for:
         dry_run: z.boolean().optional().describe("Preview changes without applying (default true)")
     },
     async (args) => {
+        trackTool("memory_compress");
         const dryRun = args.dry_run !== false; // Default to true for safety
         const nowTime = Date.now();
 
@@ -1251,6 +1256,7 @@ server.tool(
 Profiles allow you to have separate memories for different projects.`,
     {},
     async () => {
+        trackTool("profile_info");
         const profilesDir = path.join(BASE_DATA_DIR, "profiles");
         let profiles = [];
 
@@ -1314,6 +1320,7 @@ Use when making choices that affect:
         alternatives: z.string().optional().describe("What alternatives were considered")
     },
     async (args) => {
+        trackTool("decision_log");
         const id = generateId();
         const session = profileStmts.getActiveSession.get();
         const timestamp = now();
@@ -1344,6 +1351,7 @@ server.tool(
         limit: z.number().int().min(1).max(10).optional().describe("Maximum results (default 5)")
     },
     async (args) => {
+        trackTool("decision_search");
         const searchPattern = `%${args.query}%`;
         const limit = args.limit || 5;
 
@@ -1368,6 +1376,7 @@ server.tool(
     `Get usage statistics for all tools. Shows which tools are used most/least to identify workflow improvements.`,
     {},
     async () => {
+        trackTool("tool_stats");
         const stats = profileStmts.getToolStats.all();
 
         const allTools = [
