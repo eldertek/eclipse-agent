@@ -1376,7 +1376,7 @@ server.tool(
     `Get usage statistics for all tools. Shows which tools are used most/least to identify workflow improvements.`,
     {},
     async () => {
-        trackTool("tool_stats");
+        // Don't track tool_stats itself to avoid recursion
         const stats = profileStmts.getToolStats.all();
 
         const allTools = [
