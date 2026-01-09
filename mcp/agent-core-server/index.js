@@ -396,8 +396,8 @@ function analyzeStoppingRequest(args) {
         mustContinue.push("You marked the task as complete but haven't verified your changes. Run tests or validate your work first.");
     }
 
-    if (confidence !== undefined && confidence < 0.8 && stopping_reason === "task_complete") {
-        mustContinue.push(`Your confidence is only ${(confidence * 100).toFixed(0)}%. If you're not 80%+ confident the task is complete, there's likely more to do.`);
+    if (confidence !== undefined && confidence < 1.0 && stopping_reason === "task_complete") {
+        mustContinue.push(`Your confidence is only ${(confidence * 100).toFixed(0)}%. You must be 100% confident to stop.`);
     }
 
     if (stopping_reason === "task_complete" && work_remaining && work_remaining.trim().length > 10) {
