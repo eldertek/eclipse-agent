@@ -297,6 +297,7 @@ function prepareStatements(db) {
       WHERE type IN (SELECT value FROM json_each(?))
     `),
         getMemoryById: db.prepare(`SELECT * FROM memories WHERE id = ?`),
+        getMemoryByPrefix: db.prepare(`SELECT * FROM memories WHERE id LIKE ? || '%' LIMIT 1`),
         updateMemory: db.prepare(`UPDATE memories SET content = ?, tags = ?, confidence = ?, embedding = ?, updated_at = ? WHERE id = ?`),
         deleteMemory: db.prepare(`DELETE FROM memories WHERE id = ?`),
         incrementAccess: db.prepare(`UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE id = ?`),
@@ -357,6 +358,35 @@ function generateId() {
 
 function now() {
     return new Date().toISOString();
+}
+
+// Find memory by full ID or short prefix (8 chars)
+function findMemoryById(memoryId) {
+    // Try exact match first (profile then global)
+    let memory = profileStmts.getMemoryById.get(memoryId);
+    let scope = "profile";
+    let db = profileDb;
+
+    if (!memory) {
+        memory = globalStmts.getMemoryById.get(memoryId);
+        scope = "global";
+        db = globalDb;
+    }
+
+    // Try prefix match if exact failed and ID is short
+    if (!memory && memoryId.length <= 8) {
+        memory = profileStmts.getMemoryByPrefix.get(memoryId);
+        scope = "profile";
+        db = profileDb;
+
+        if (!memory) {
+            memory = globalStmts.getMemoryByPrefix.get(memoryId);
+            scope = "global";
+            db = globalDb;
+        }
+    }
+
+    return memory ? { memory, scope, db } : null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1011,23 +1041,18 @@ Relationships: related_to, depends_on, supersedes, example_of`,
         trackTool("memory_link");
         const ts = now();
 
-        // Try to find source in either DB
-        let sourceDb = profileDb;
-        let sourceStmts = profileStmts;
-        let source = sourceStmts.getMemoryById.get(args.source_id);
-        if (!source) {
-            sourceDb = globalDb;
-            sourceStmts = globalStmts;
-            source = sourceStmts.getMemoryById.get(args.source_id);
+        // Find source memory (supports short IDs)
+        const sourceResult = findMemoryById(args.source_id);
+        if (!sourceResult) {
+            return { content: [{ type: "text", text: JSON.stringify({ error: "source_not_found", id: args.source_id }) }], isError: true };
         }
-        if (!source) {
-            return { content: [{ type: "text", text: JSON.stringify({ error: "source_not_found" }) }], isError: true };
-        }
+        const { memory: source, db: sourceDb } = sourceResult;
+        const sourceFullId = source.id;
 
         if (args.operation === "list") {
             // Get all links where this memory is source or target
-            const outgoing = sourceDb.prepare("SELECT * FROM memory_links WHERE source_id = ?").all(args.source_id);
-            const incoming = sourceDb.prepare("SELECT * FROM memory_links WHERE target_id = ?").all(args.source_id);
+            const outgoing = sourceDb.prepare("SELECT * FROM memory_links WHERE source_id = ?").all(sourceFullId);
+            const incoming = sourceDb.prepare("SELECT * FROM memory_links WHERE target_id = ?").all(sourceFullId);
 
             const links = [
                 ...outgoing.map(l => ({ direction: "->", target: l.target_id.slice(0, 8), rel: l.relationship })),
@@ -1050,17 +1075,19 @@ Relationships: related_to, depends_on, supersedes, example_of`,
                 return { content: [{ type: "text", text: JSON.stringify({ error: "target_id required" }) }], isError: true };
             }
 
-            // Verify target exists
-            let target = profileStmts.getMemoryById.get(args.target_id) || globalStmts.getMemoryById.get(args.target_id);
-            if (!target) {
-                return { content: [{ type: "text", text: JSON.stringify({ error: "target_not_found" }) }], isError: true };
+            // Find target memory (supports short IDs)
+            const targetResult = findMemoryById(args.target_id);
+            if (!targetResult) {
+                return { content: [{ type: "text", text: JSON.stringify({ error: "target_not_found", id: args.target_id }) }], isError: true };
             }
+            const { memory: target } = targetResult;
+            const targetFullId = target.id;
 
             const id = generateId();
             const rel = args.relationship || "related_to";
 
             try {
-                sourceDb.prepare("INSERT OR REPLACE INTO memory_links (id, source_id, target_id, relationship, created_at) VALUES (?, ?, ?, ?, ?)").run(id, args.source_id, args.target_id, rel, ts);
+                sourceDb.prepare("INSERT OR REPLACE INTO memory_links (id, source_id, target_id, relationship, created_at) VALUES (?, ?, ?, ?, ?)").run(id, sourceFullId, targetFullId, rel, ts);
                 return {
                     content: [{
                         type: "text",
@@ -1082,7 +1109,11 @@ Relationships: related_to, depends_on, supersedes, example_of`,
                 return { content: [{ type: "text", text: JSON.stringify({ error: "target_id required" }) }], isError: true };
             }
 
-            const result = sourceDb.prepare("DELETE FROM memory_links WHERE source_id = ? AND target_id = ?").run(args.source_id, args.target_id);
+            // Find target to get full ID
+            const targetResult = findMemoryById(args.target_id);
+            const targetFullId = targetResult ? targetResult.memory.id : args.target_id;
+
+            const result = sourceDb.prepare("DELETE FROM memory_links WHERE source_id = ? AND target_id = ?").run(sourceFullId, targetFullId);
             return {
                 content: [{
                     type: "text",
