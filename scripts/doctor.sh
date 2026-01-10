@@ -222,7 +222,7 @@ info "Testing MCP server..."
 
 cd "$INSTALL_DIR/mcp/agent-core-server"
 
-TOOL_COUNT=$(timeout 10 node -e "
+TOOL_COUNT=$(timeout 15 node -e "
 const { spawn } = require('child_process');
 const proc = spawn('node', ['index.js'], { stdio: ['pipe', 'pipe', 'pipe'] });
 
@@ -240,15 +240,17 @@ setTimeout(() => {
   try {
     const lines = output.trim().split('\n');
     for (const line of lines) {
-      const resp = JSON.parse(line);
-      if (resp.result?.tools) {
-        console.log(resp.result.tools.length);
-        process.exit(0);
-      }
+      try {
+        const resp = JSON.parse(line);
+        if (resp.result?.tools) {
+          console.log(resp.result.tools.length);
+          process.exit(0);
+        }
+      } catch (e) {}
     }
   } catch {}
   console.log('0');
-}, 3000);
+}, 12000);
 " 2>/dev/null || echo "0")
 
 if [ "$TOOL_COUNT" -gt 0 ]; then
