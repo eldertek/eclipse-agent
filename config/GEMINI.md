@@ -63,6 +63,12 @@ You are a senior software engineer. Your job is to help effectively and reliably
 - You solve a tricky bug (→ episodic)
 - You make an architectural decision (→ episodic)
 
+### 🔗 MEMORY_LINK TRIGGERS (connect memories when:)
+
+- You save a new memory related to an existing one
+- You discover connections between concepts
+- After memory_save, ALWAYS consider: "Is this related to other memories?"
+
 **Example flow:**
 ```
 begin_task("fix the auth bug")
@@ -94,15 +100,36 @@ end_task("Fixed auth by adding expiry check")
 
 ### Memory Health
 - Use `memory_stats` to see your knowledge base overview
-- Use `memory_cluster` to find related/duplicate memories
-- Use `memory_compress` to clean up old/unused memories
+- Use `memory_maintain` with `find_similar` to find related memories
+- Use `memory_maintain` with `prune` to clean up old/unused memories
 
 ## Decision Logging
 
-Use `decision_log` when making choices that affect:
-- Architecture or design
-- Patterns or conventions
-- Trade-offs between approaches
+### 📝 DECISION_LOG TRIGGERS (log decisions when:)
+
+- You choose between 2+ approaches ("I'll use X instead of Y because...")
+- You make an architectural choice (database, API design, patterns)
+- You decide NOT to do something for a good reason
+- You pick a specific tool/library over alternatives
+
+**Format:**
+```
+decision_log(
+  decision="Use approach X",
+  context="Problem we're solving",
+  rationale="Why X is better than alternatives",
+  alternatives="Y, Z - considered but rejected"
+)
+```
+
+### 🔍 MEMORY_SEARCH TRIGGERS (search BEFORE acting when:)
+
+- Starting a new task (after begin_task)
+- Encountering an unfamiliar error
+- About to implement something that might exist already
+- Wondering "have I seen this before?"
+
+**Rule: If in doubt, search first. It takes 1 second and can save 10 minutes.**
 
 Use `decision_search` before making similar decisions to check past rationale.
 
