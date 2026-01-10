@@ -572,65 +572,14 @@ Use when you're done and want to wrap up quickly.`,
                     task: session.task_summary,
                     verified: args.verified !== false,
                     work: workDone,
-                    suggest: isSkill ? "skill_from_session" : (checkpoints.length >= 2 ? "memory_save" : null)
+                    suggest: checkpoints.length >= 2 ? "memory_save" : null
                 })
             }]
         };
     }
 );
 
-server.tool(
-    "skill_from_session",
-    `Generate skill template from session checkpoints. Returns JSON.`,
-    {
-        title: z.string().optional().describe("Title (auto-generated if omitted)"),
-        session_id: z.string().optional().describe("Session ID (defaults to current/last)")
-    },
-    async (args) => {
-        trackTool("skill_from_session");
-        let session = args.session_id
-            ? profileStmts.getSessionById.get(args.session_id)
-            : profileStmts.getActiveSession.get();
 
-        if (!session) {
-            const recent = profileStmts.getRecentSessions.all(1);
-            if (recent.length > 0) session = recent[0];
-        }
-
-        if (!session) {
-            return { content: [{ type: "text", text: JSON.stringify({ error: "no_session" }) }], isError: true };
-        }
-
-        const checkpoints = JSON.parse(session.checkpoints || "[]");
-
-        if (checkpoints.length === 0) {
-            return { content: [{ type: "text", text: JSON.stringify({ error: "no_checkpoints" }) }] };
-        }
-
-        const title = args.title || session.task_summary;
-        const steps = checkpoints.map(cp => cp.note || cp.summary).filter(Boolean);
-
-        const taskLower = session.task_summary.toLowerCase();
-        let trigger = session.task_summary;
-        if (taskLower.includes('error') || taskLower.includes('fail')) {
-            trigger = `Error: ${session.task_summary}`;
-        }
-
-        return {
-            content: [{
-                type: "text",
-                text: JSON.stringify({
-                    status: "generated",
-                    title,
-                    trigger,
-                    steps,
-                    related: null,
-                    save_with: `memory_save(type:"skill",title:"${title}",category:"skills",content:"TRIGGER:...STEPS:...RELATED:...")`
-                })
-            }]
-        };
-    }
-);
 
 // ───────────────────────────────────────────────────────────────────────────
 // PLANNING & TASK TRACKING

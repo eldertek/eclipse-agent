@@ -178,7 +178,7 @@ elif [ -d "$PROFILES_DIR" ]; then
         echo ""
         
         # Show never used tools
-        ALL_TOOLS="begin_task end_task checkpoint skill_from_session task_resume memory_save memory_search memory_update memory_forget memory_stats memory_maintain profile_info decision_log decision_search"
+        ALL_TOOLS="begin_task end_task checkpoint task_resume memory_save memory_search memory_update memory_forget memory_stats memory_maintain profile_info decision_log decision_search"
         
         NEVER_USED=""
         for tool in $ALL_TOOLS; do
