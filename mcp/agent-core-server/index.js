@@ -636,6 +636,12 @@ Current profile: ${CURRENT_PROFILE}`,
             reason: d.rationale.slice(0, 60)
         }));
 
+        // Build action required message based on what was found
+        let actionRequired = null;
+        if (memories.length > 0 || decisions.length > 0) {
+            actionRequired = "⚠️ READ ABOVE before working. Your past self may have already solved this.";
+        }
+
         return {
             content: [{
                 type: "text",
@@ -645,7 +651,8 @@ Current profile: ${CURRENT_PROFILE}`,
                     profile: CURRENT_PROFILE,
                     task: args.task_summary,
                     memories: memories.length > 0 ? memories : null,
-                    decisions: decisions.length > 0 ? decisions : null
+                    decisions: decisions.length > 0 ? decisions : null,
+                    action_required: actionRequired
                 })
             }]
         };
