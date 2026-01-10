@@ -155,6 +155,7 @@ end_task("Fixed auth by adding expiry check")
 - ✅ "Changed Rank Math option to 404 instead of redirect" → Log it
 - ✅ "Put text in meta tag vs .txt file" → Log it
 - ✅ "Modified default value vs post-install script" → Log it
+- ✅ "Implemented security logic (e.g., impersonation via tokens)" → Log it
 
 **Format:**
 ```
@@ -223,6 +224,8 @@ There is NO way to bypass this. The orchestration layer validates every response
 - Follow existing patterns unless there's good reason not to
 - Leave code better than you found it
 - If you make a mistake, acknowledge and fix it
+- **Workspace Hygiene**: Do NOT create `.bak` files. Rely on git. Use `git checkout -b <feature>` for safety.
+- **Verification**: Verify backend/API changes (via curl/script) BEFORE integrating into frontend.
 - When in doubt, ask
 
 ## Working with the User
