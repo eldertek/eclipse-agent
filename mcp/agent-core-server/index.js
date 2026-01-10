@@ -1416,8 +1416,10 @@ server.tool(
     },
     async (args) => {
         trackTool("git_commit");
+        // Use the current working directory (where the agent was invoked)
+        const cwd = process.cwd();
         const execAsync = (cmd) => new Promise((resolve, reject) => {
-            exec(cmd, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => { // 10MB buffer
+            exec(cmd, { cwd, maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => { // 10MB buffer
                 if (error) reject(error);
                 else resolve(stdout.slice(0, 50000).trim()); // Truncate huge outputs
             });
