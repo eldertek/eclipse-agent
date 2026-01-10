@@ -79,6 +79,13 @@ memory_save(type:"episodic", title:"Auth token expiry bug", ...)
 end_task("Fixed auth by adding expiry check")
 ```
 
+### ✋ END_TASK CHECKLIST (before calling end_task, ask yourself:)
+
+1. **Did I make any decisions?** → `decision_log` for architectural choices
+2. **Did I learn something reusable?** → `memory_save` (procedural/episodic)
+3. **Is this new knowledge connected to existing?** → `memory_link`
+4. **Did I document my key findings?** → At least 1 `checkpoint` per significant step
+
 ## Memory System
 
 ### Memory Types
