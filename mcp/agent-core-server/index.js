@@ -17,6 +17,7 @@ const { z } = require("zod");
 const Database = require("better-sqlite3");
 const path = require("path");
 const fs = require("fs");
+const { exec } = require("child_process");
 const crypto = require("crypto");
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1404,6 +1405,101 @@ server.tool(
 // ═══════════════════════════════════════════════════════════════════════════
 // START SERVER
 // ═══════════════════════════════════════════════════════════════════════════
+
+
+server.tool(
+    "git_commit",
+    "Stage, commit, and push/pull changes with an AI-generated message using gemini CLI.",
+    {
+        action: z.enum(["commit_only", "push", "pull"]).default("pull").describe("Action to perform after commit"),
+        extra_context: z.string().optional().describe("Additional context for the commit message")
+    },
+    async (args) => {
+        trackTool("git_commit");
+        const execAsync = (cmd) => new Promise((resolve, reject) => {
+            exec(cmd, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => { // 10MB buffer
+                if (error) reject(error);
+                else resolve(stdout.slice(0, 50000).trim()); // Truncate huge outputs
+            });
+        });
+
+        const geminiPath = "gemini"; // Assuming in PATH, otherwise use full path
+
+        try {
+            // 1. Check for changes
+            try {
+                await execAsync("git diff --cached --quiet").catch(async () => {
+                    // diff --quiet returns 1 if there are changes. If it returns 0 (success), NO changes.
+                    // Wait, logic is: exit 1 = changes, exit 0 = no changes.
+                    // But here we want to know if we need to add.
+                    // Let's just run git add -A always.
+                    await execAsync("git add -A");
+                });
+                await execAsync("git add -A"); // Ensure everything added
+            } catch (e) {
+                // Ignore
+            }
+
+            const finalDiff = await execAsync("git diff --cached");
+            if (!finalDiff) {
+                return { content: [{ type: "text", text: JSON.stringify({ error: "No changes to commit." }) }], isError: true };
+            }
+
+            // 2. Generate message
+            // We ask for XML tags to robustly extract the message from agent chatter
+            const prompt = `Generate a concise, conventional git commit message for this diff. Output ONLY the commit message inside <COMMIT_MSG> tags. Context: ${args.extra_context || "None"}. Diff: \n${finalDiff.slice(0, 8000)}`;
+
+            const geminiCmd = `${geminiPath} --yolo "${prompt.replace(/"/g, '\\"')}"`;
+
+            let message = "update";
+            try {
+                // We accept failure here to fallback to manual message if AI fails
+                const output = await execAsync(geminiCmd);
+                const match = output.match(/<COMMIT_MSG>(.*?)<\/COMMIT_MSG>/s);
+                if (match) {
+                    message = match[1].trim();
+                } else {
+                    // Fallback: try to find a Conventional Commit style line
+                    const lines = output.split('\n');
+                    const convLine = lines.find(l => /^(feat|fix|docs|style|refactor|perf|test|chore)(\(.+\))?: ./.test(l));
+                    if (convLine) message = convLine.trim();
+                }
+            } catch (e) {
+                console.error("Gemini generation error:", e);
+                message = "chore: update (auto-commit fallback)";
+            }
+
+            // Cleanup message (remove quotes that might break shell)
+            message = message.replace(/"/g, "'");
+
+            // 3. Commit
+            await execAsync(`git commit -m "${message}"`);
+
+            // 4. Post-action
+            let postOutput = "";
+            if (args.action === "pull") {
+                postOutput = await execAsync("git pull");
+            } else if (args.action === "push") {
+                postOutput = await execAsync("git push");
+            }
+
+            return {
+                content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        status: "success",
+                        message: message,
+                        action: args.action,
+                        output: postOutput
+                    })
+                }]
+            };
+
+        } catch (error) {
+            return { content: [{ type: "text", text: JSON.stringify({ error: error.message }) }], isError: true };
+        }
+    }
+);
 
 async function main() {
     // Pre-warm embedding model in background

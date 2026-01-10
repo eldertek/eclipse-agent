@@ -62,9 +62,9 @@ decision_search(query="<technical choice keywords>")
 
 ## Workflow Structure
 
-> **💡 KEY MINDSET:** MCP tools (checkpoint, memory_save, decision_log) are NOT overhead.
-> They CREATE VALUE by building reusable knowledge. A 5-second tool call now saves 10 minutes later.
-> Treat them as integral to your work, like testing code after writing it.
+**💡 KEY MINDSET:** MCP tools (checkpoint, memory_save, decision_log) are NOT overhead.
+They CREATE VALUE by building reusable knowledge. A 5-second tool call now saves 10 minutes later.
+Treat them as integral to your work, like testing code after writing it.
 
 **EVERY task follows this structure:**
 
