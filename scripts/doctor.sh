@@ -108,6 +108,7 @@ PROFILES_DIR="$DATA_DIR/profiles"
 if [ -d "$PROFILES_DIR" ]; then
     PROFILE_COUNT=$(find "$PROFILES_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
     ok "Profiles directory exists ($PROFILE_COUNT profiles)"
+    info "  Path: $PROFILES_DIR"
     
     # Count memories across all profiles
     TOTAL_MEMORIES=0
