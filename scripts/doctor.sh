@@ -129,6 +129,20 @@ fi
 echo ""
 info "Tool usage statistics (all profiles):"
 
+# Auto-migrate: create tool_usage table if missing
+if [ -d "$PROFILES_DIR" ]; then
+    for db in "$PROFILES_DIR"/*/memory.db; do
+        if [ -f "$db" ]; then
+            sqlite3 "$db" "CREATE TABLE IF NOT EXISTS tool_usage (
+                tool_name TEXT PRIMARY KEY,
+                call_count INTEGER DEFAULT 0,
+                last_called TEXT,
+                first_called TEXT
+            )" 2>/dev/null || true
+        fi
+    done
+fi
+
 if [ -d "$PROFILES_DIR" ]; then
     # Create temp file for aggregation
     TEMP_STATS=$(mktemp)
