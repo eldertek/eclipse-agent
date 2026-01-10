@@ -111,14 +111,19 @@ if [ -d "$PROFILES_DIR" ]; then
     info "  Path: $PROFILES_DIR"
     
     # Count memories across all profiles
-    TOTAL_MEMORIES=0
-    for db in "$PROFILES_DIR"/*/memory.db; do
-        if [ -f "$db" ]; then
-            COUNT=$(sqlite3 "$db" "SELECT COUNT(*) FROM memories" 2>/dev/null || echo "0")
-            TOTAL_MEMORIES=$((TOTAL_MEMORIES + COUNT))
-        fi
-    done
-    ok "Total memories: $TOTAL_MEMORIES"
+    if command -v sqlite3 >/dev/null 2>&1; then
+        TOTAL_MEMORIES=0
+        for db in "$PROFILES_DIR"/*/memory.db; do
+            if [ -f "$db" ]; then
+                COUNT=$(sqlite3 "$db" "SELECT COUNT(*) FROM memories" 2>/dev/null || echo "0")
+                TOTAL_MEMORIES=$((TOTAL_MEMORIES + COUNT))
+            fi
+        done
+        ok "Total memories: $TOTAL_MEMORIES"
+    else
+        warn "sqlite3 not installed - cannot count memories (use memory_stats MCP tool instead)"
+        warn "  Install with: sudo apt-get install -y sqlite3"
+    fi
 else
     info "No profiles yet (will be created on first use)"
 fi
@@ -130,8 +135,11 @@ fi
 echo ""
 info "Tool usage statistics (all profiles):"
 
-# Auto-migrate: create tool_usage table if missing
-if [ -d "$PROFILES_DIR" ]; then
+if ! command -v sqlite3 >/dev/null 2>&1; then
+    warn "sqlite3 not installed - cannot show tool usage stats"
+    warn "  Install with: sudo apt-get install -y sqlite3"
+elif [ -d "$PROFILES_DIR" ]; then
+    # Auto-migrate: create tool_usage table if missing
     for db in "$PROFILES_DIR"/*/memory.db; do
         if [ -f "$db" ]; then
             sqlite3 "$db" "CREATE TABLE IF NOT EXISTS tool_usage (
@@ -142,9 +150,7 @@ if [ -d "$PROFILES_DIR" ]; then
             )" 2>/dev/null || true
         fi
     done
-fi
 
-if [ -d "$PROFILES_DIR" ]; then
     # Create temp file for aggregation
     TEMP_STATS=$(mktemp)
     
