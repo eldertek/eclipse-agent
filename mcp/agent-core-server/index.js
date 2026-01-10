@@ -134,6 +134,18 @@ function initDatabase(dbPath) {
       last_called TEXT,
       first_called TEXT
     );
+
+    -- Memory links for knowledge graph
+    CREATE TABLE IF NOT EXISTS memory_links (
+      id TEXT PRIMARY KEY,
+      source_id TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      relationship TEXT DEFAULT 'related_to',
+      created_at TEXT NOT NULL,
+      UNIQUE(source_id, target_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_links_source ON memory_links(source_id);
+    CREATE INDEX IF NOT EXISTS idx_links_target ON memory_links(target_id);
   `);
 
     return db;
@@ -976,6 +988,112 @@ Use when:
         } catch (error) {
             return { content: [{ type: "text", text: JSON.stringify({ error: error.message }) }], isError: true };
         }
+    }
+);
+
+server.tool(
+    "memory_link",
+    `Create or view links between related memories to build a knowledge graph.
+
+Operations:
+- create: Link two memories together
+- list: Show all links for a memory
+- delete: Remove a link
+
+Relationships: related_to, depends_on, supersedes, example_of`,
+    {
+        operation: z.enum(["create", "list", "delete"]).describe("Link operation"),
+        source_id: z.string().describe("Source memory ID"),
+        target_id: z.string().optional().describe("Target memory ID (for create/delete)"),
+        relationship: z.enum(["related_to", "depends_on", "supersedes", "example_of"]).optional().describe("Type of relationship (default: related_to)")
+    },
+    async (args) => {
+        trackTool("memory_link");
+        const ts = now();
+
+        // Try to find source in either DB
+        let sourceDb = profileDb;
+        let sourceStmts = profileStmts;
+        let source = sourceStmts.getMemoryById.get(args.source_id);
+        if (!source) {
+            sourceDb = globalDb;
+            sourceStmts = globalStmts;
+            source = sourceStmts.getMemoryById.get(args.source_id);
+        }
+        if (!source) {
+            return { content: [{ type: "text", text: JSON.stringify({ error: "source_not_found" }) }], isError: true };
+        }
+
+        if (args.operation === "list") {
+            // Get all links where this memory is source or target
+            const outgoing = sourceDb.prepare("SELECT * FROM memory_links WHERE source_id = ?").all(args.source_id);
+            const incoming = sourceDb.prepare("SELECT * FROM memory_links WHERE target_id = ?").all(args.source_id);
+
+            const links = [
+                ...outgoing.map(l => ({ direction: "->", target: l.target_id.slice(0, 8), rel: l.relationship })),
+                ...incoming.map(l => ({ direction: "<-", source: l.source_id.slice(0, 8), rel: l.relationship }))
+            ];
+
+            return {
+                content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        memory: source.title,
+                        links: links.length > 0 ? links : null
+                    })
+                }]
+            };
+        }
+
+        if (args.operation === "create") {
+            if (!args.target_id) {
+                return { content: [{ type: "text", text: JSON.stringify({ error: "target_id required" }) }], isError: true };
+            }
+
+            // Verify target exists
+            let target = profileStmts.getMemoryById.get(args.target_id) || globalStmts.getMemoryById.get(args.target_id);
+            if (!target) {
+                return { content: [{ type: "text", text: JSON.stringify({ error: "target_not_found" }) }], isError: true };
+            }
+
+            const id = generateId();
+            const rel = args.relationship || "related_to";
+
+            try {
+                sourceDb.prepare("INSERT OR REPLACE INTO memory_links (id, source_id, target_id, relationship, created_at) VALUES (?, ?, ?, ?, ?)").run(id, args.source_id, args.target_id, rel, ts);
+                return {
+                    content: [{
+                        type: "text",
+                        text: JSON.stringify({
+                            status: "linked",
+                            source: source.title,
+                            target: target.title,
+                            relationship: rel
+                        })
+                    }]
+                };
+            } catch (err) {
+                return { content: [{ type: "text", text: JSON.stringify({ error: err.message }) }], isError: true };
+            }
+        }
+
+        if (args.operation === "delete") {
+            if (!args.target_id) {
+                return { content: [{ type: "text", text: JSON.stringify({ error: "target_id required" }) }], isError: true };
+            }
+
+            const result = sourceDb.prepare("DELETE FROM memory_links WHERE source_id = ? AND target_id = ?").run(args.source_id, args.target_id);
+            return {
+                content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        status: result.changes > 0 ? "deleted" : "not_found"
+                    })
+                }]
+            };
+        }
+
+        return { content: [{ type: "text", text: JSON.stringify({ error: "unknown_operation" }) }], isError: true };
     }
 );
 
