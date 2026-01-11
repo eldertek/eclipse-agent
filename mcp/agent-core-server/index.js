@@ -74,6 +74,17 @@ const CURRENT_PROFILE = getProfileName();
 const PROFILE_DIR = getProfileDir(CURRENT_PROFILE);
 const GLOBAL_DIR = getProfileDir("global");
 
+// Bolt Optimization: RAM Cache for embeddings to avoid DB read churn
+let MEMORY_CACHE = {
+    profile: null, // { timestamp: 0, data: [] }
+    global: null   // { timestamp: 0, data: [] }
+};
+
+function invalidateMemoryCache(scope) {
+    if (scope === "all" || scope === "profile") MEMORY_CACHE.profile = null;
+    if (scope === "all" || scope === "global") MEMORY_CACHE.global = null;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // DATABASE SETUP (per-profile + global)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -217,7 +228,9 @@ async function generateEmbedding(text) {
     if (!pipe) return null;
 
     try {
-        const output = await pipe(text, { pooling: "mean", normalize: true });
+        // Sentinel: Prevent DoS by truncating overly large inputs
+        const safeText = text.slice(0, 8000);
+        const output = await pipe(safeText, { pooling: "mean", normalize: true });
         return new Float32Array(output.data);
     } catch (err) {
         console.error("[eclipse] Embedding generation error:", err.message);
@@ -278,6 +291,8 @@ function embeddingToBuffer(embedding) {
 
 function bufferToEmbedding(buffer) {
     if (!buffer) return null;
+    // Sentinel: Integritiy check
+    if (buffer.byteLength % 4 !== 0) return null;
     return new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4);
 }
 
@@ -413,23 +428,29 @@ async function semanticSearch(query, options = {}) {
     // Generate query embedding
     const queryEmbedding = await generateEmbedding(query);
 
-    // Collect memories from relevant databases
+    // Collect memories from relevant databases (using Cache if available)
     let allMemories = [];
 
     if (scope === "all" || scope === "profile") {
-        const typesJson = JSON.stringify(memoryTypes);
-        const profileMemories = memoryTypes.length === 3
-            ? profileStmts.getAllMemories.all()
-            : profileStmts.getMemoriesByType.all(typesJson);
-        allMemories.push(...profileMemories.map(m => ({ ...m, source: "profile" })));
+        if (!MEMORY_CACHE.profile) {
+            MEMORY_CACHE.profile = profileStmts.getAllMemories.all().map(m => ({
+                ...m,
+                embeddingVec: bufferToEmbedding(m.embedding), // Pre-decode embedding
+                source: "profile"
+            }));
+        }
+        allMemories.push(...MEMORY_CACHE.profile);
     }
 
     if (scope === "all" || scope === "global") {
-        const typesJson = JSON.stringify(memoryTypes);
-        const globalMemories = memoryTypes.length === 3
-            ? globalStmts.getAllMemories.all()
-            : globalStmts.getMemoriesByType.all(typesJson);
-        allMemories.push(...globalMemories.map(m => ({ ...m, source: "global" })));
+        if (!MEMORY_CACHE.global) {
+            MEMORY_CACHE.global = globalStmts.getAllMemories.all().map(m => ({
+                ...m,
+                embeddingVec: bufferToEmbedding(m.embedding), // Pre-decode embedding
+                source: "global"
+            }));
+        }
+        allMemories.push(...MEMORY_CACHE.global);
     }
 
     // Filter by type if not all
@@ -458,7 +479,7 @@ async function semanticSearch(query, options = {}) {
     const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 2);
 
     const scored = allMemories.map(memory => {
-        const memoryEmbedding = bufferToEmbedding(memory.embedding);
+        const memoryEmbedding = memory.embeddingVec || bufferToEmbedding(memory.embedding);
         const semanticSimilarity = memoryEmbedding ? cosineSimilarity(queryEmbedding, memoryEmbedding) : 0;
 
         // Hybrid: keyword matching boost
@@ -652,6 +673,7 @@ Skills available:
 - performance: ⚡ Bolt - Speed optimization focus
 - security: 🛡️ Sentinel - Security hardening focus
 - review: 🔍 Post-project introspection
+- discovery: 🕵️ Sherlock - Find tasks/bugs
 - general: No specialized prompt (default)
 
 Just call this ONCE at the start, then get to work.
@@ -659,7 +681,7 @@ Just call this ONCE at the start, then get to work.
 Current profile: ${CURRENT_PROFILE}`,
     {
         task_summary: z.string().describe("Brief description of what you're about to do"),
-        skill: z.enum(["design", "performance", "security", "review", "general"]).optional().describe("Specialized skill/persona to activate (default: general)")
+        skill: z.enum(["design", "performance", "security", "review", "discovery", "general"]).optional().describe("Specialized skill/persona to activate (default: general)")
     },
     async (args) => {
         trackTool("begin_task");
@@ -706,7 +728,8 @@ Current profile: ${CURRENT_PROFILE}`,
                 design: "🎨 Palette",
                 performance: "⚡ Bolt",
                 security: "🛡️ Sentinel",
-                review: "🔍 Reviewer"
+                review: "🔍 Reviewer",
+                discovery: "🕵️ Sherlock"
             };
             skillName = skillEmojis[skill] || skill;
 
@@ -926,6 +949,9 @@ Be PARSIMONIOUS: only save what's genuinely useful for future work.`,
                 timestamp
             );
 
+            // Bolt: Invalidate cache for this scope
+            invalidateMemoryCache(targetScope);
+
             return {
                 content: [{
                     type: "text",
@@ -1033,6 +1059,9 @@ server.tool(
 
             stmts.updateMemory.run(newContent, JSON.stringify(newTags), newConfidence, newEmbedding, timestamp, args.memory_id);
 
+            // Bolt: Invalidate cache
+            invalidateMemoryCache(scope);
+
             return { content: [{ type: "text", text: JSON.stringify({ status: "updated", id: args.memory_id.slice(0, 8), scope }) }] };
         } catch (error) {
             return { content: [{ type: "text", text: JSON.stringify({ error: error.message }) }], isError: true };
@@ -1070,6 +1099,7 @@ Use when:
 
         try {
             stmts.deleteMemory.run(args.memory_id);
+            invalidateMemoryCache(scope); // Bolt: Invalidate
             return { content: [{ type: "text", text: JSON.stringify({ status: "deleted", id: args.memory_id.slice(0, 8), title: existing.title, scope }) }] };
         } catch (error) {
             return { content: [{ type: "text", text: JSON.stringify({ error: error.message }) }], isError: true };

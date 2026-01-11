@@ -62,6 +62,7 @@ Activate specialized personas with `begin_task(skill: "...")`:
 | `performance` | ⚡ Bolt | Speed optimization, efficiency |
 | `security` | 🛡️ Sentinel | Vulnerability detection, hardening |
 | `review` | 🔍 Reviewer | Post-project introspection |
+| `discovery` | 🕵️ Sherlock | Codebase exploration & task finding |
 | `general` | - | No specialized prompt (default) |
 
 Skills load prompts from `/prompts/{skill}.md`.
