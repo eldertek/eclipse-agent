@@ -1933,75 +1933,7 @@ SESSION CONTEXT:
     }
 );
 
-// ───────────────────────────────────────────────────────────────────────────
-// SELF-EVOLUTION FEEDBACK: Suggest Missing Tools
-// ───────────────────────────────────────────────────────────────────────────
 
-server.tool(
-    "tool_wishlist",
-    `💡 SELF-EVOLUTION: Record a tool or capability you wish you had.
-
-Use this when you think: "I wish I had a tool that could..."
-- This does NOT create the tool
-- It logs the suggestion for the human to review and potentially implement
-- Helps identify patterns in what's missing
-
-Be specific about what the tool should do and when you'd use it.`,
-    {
-        tool_name: z.string().describe("Suggested name for the tool (snake_case)"),
-        description: z.string().describe("What this tool should do"),
-        trigger: z.string().describe("When you would use this tool"),
-        example_use: z.string().optional().describe("Example invocation or use case"),
-        priority: z.enum(["low", "medium", "high"]).optional().describe("How much would this help? (default: medium)")
-    },
-    async (args) => {
-        trackTool("tool_wishlist");
-        const timestamp = now();
-        const id = generateId();
-        const priority = args.priority || "medium";
-
-        // Store as a special type of memory in the global scope (shared across projects)
-        const content = `TOOL SUGGESTION: ${args.tool_name}
-
-DESCRIPTION: ${args.description}
-
-TRIGGER: ${args.trigger}
-
-${args.example_use ? `EXAMPLE: ${args.example_use}` : ''}
-
-PRIORITY: ${priority}
-REQUESTED: ${timestamp}`;
-
-        const title = `Wishlist: ${args.tool_name}`;
-        const tags = JSON.stringify(["wishlist", "tool-suggestion", priority]);
-
-        const textToEmbed = `${title} ${content}`;
-        const embedding = await generateEmbedding(textToEmbed);
-        const embeddingBuffer = embeddingToBuffer(embedding);
-
-        try {
-            globalStmts.insertMemory.run(
-                id, "procedural", "tool-wishlist", title, content, tags, 0.8,
-                embeddingBuffer, null, timestamp, timestamp, timestamp
-            );
-
-            return {
-                content: [{
-                    type: "text",
-                    text: JSON.stringify({
-                        status: "suggestion_logged",
-                        id: id.slice(0, 8),
-                        tool: args.tool_name,
-                        priority,
-                        message: `💡 Tool suggestion saved. Run 'memory_search(query="wishlist")' to see all suggestions.`
-                    })
-                }]
-            };
-        } catch (error) {
-            return { content: [{ type: "text", text: JSON.stringify({ error: error.message }) }], isError: true };
-        }
-    }
-);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // START SERVER

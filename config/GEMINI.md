@@ -240,32 +240,7 @@ session_postmortem(
 
 **Your failures are your greatest teachers. Capture them.**
 
-## 💡 SELF-EVOLUTION: Tool Wishlist
 
-**When you think "I wish I had a tool that could...", call `tool_wishlist`.**
-
-### Triggers (use `tool_wishlist` when:)
-- You're doing something manually that could be automated
-- You need information that no existing tool provides
-- You find yourself repeating a pattern that should be a tool
-- A capability gap is blocking you
-
-### How to use:
-```
-tool_wishlist(
-  tool_name="code_dependency_graph",
-  description="Show all files that import or depend on a given file",
-  trigger="Before refactoring a widely-used module",
-  priority="high"
-)
-```
-
-### ⚠️ IMPORTANT:
-- This does NOT create the tool
-- It logs the suggestion for the human to review
-- Run `memory_search(query="wishlist")` to see all suggestions
-
-**You are NOT allowed to code MCP tools yourself. You can only suggest them.**
 
 ## Decision Logging
 
