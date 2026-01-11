@@ -315,6 +315,7 @@ function prepareStatements(db) {
         getActiveSession: db.prepare(`SELECT * FROM sessions WHERE ended_at IS NULL ORDER BY started_at DESC LIMIT 1`),
         getRecentSessions: db.prepare(`SELECT * FROM sessions ORDER BY started_at DESC LIMIT ?`),
         getSessionById: db.prepare(`SELECT * FROM sessions WHERE id = ?`),
+        getSessionByPrefix: db.prepare(`SELECT * FROM sessions WHERE id LIKE ? || '%' LIMIT 1`),
         updateSession: db.prepare(`UPDATE sessions SET current_phase = ?, checkpoints = ?, task_summary = COALESCE(?, task_summary) WHERE id = ?`),
         endSession: db.prepare(`UPDATE sessions SET ended_at = ? WHERE id = ?`),
         reopenSession: db.prepare(`UPDATE sessions SET ended_at = NULL WHERE id = ?`),
@@ -387,6 +388,19 @@ function findMemoryById(memoryId) {
     }
 
     return memory ? { memory, scope, db } : null;
+}
+
+// Find session by full ID or short prefix (8 chars)
+function findSessionById(sessionId) {
+    // Try exact match first
+    let session = profileStmts.getSessionById.get(sessionId);
+
+    // Try prefix match if exact failed and ID is short
+    if (!session && sessionId.length <= 8) {
+        session = profileStmts.getSessionByPrefix.get(sessionId);
+    }
+
+    return session;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -723,14 +737,14 @@ server.tool(
             return { content: [{ type: "text", text: JSON.stringify({ sessions: list }) }] };
         }
 
-        const session = profileStmts.getSessionById.get(args.session_id);
+        const session = findSessionById(args.session_id);
 
         if (!session) {
             return { content: [{ type: "text", text: JSON.stringify({ error: "not_found", id: args.session_id }) }], isError: true };
         }
 
         if (session.ended_at) {
-            profileStmts.reopenSession.run(args.session_id);
+            profileStmts.reopenSession.run(session.id);
         }
 
         const checkpoints = JSON.parse(session.checkpoints || "[]");
@@ -1557,7 +1571,7 @@ This turns failures into permanent learning. Returns a suggested memory to save.
 
         // Get session
         let session = args.session_id
-            ? profileStmts.getSessionById.get(args.session_id)
+            ? findSessionById(args.session_id)
             : profileStmts.getActiveSession.get() || profileStmts.getRecentSessions.all(1)[0];
 
         if (!session) {
