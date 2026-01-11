@@ -28,6 +28,7 @@ That's it. Everything else is optional.
 | | `end_task` | Finish a task (auto-suggests skills) |
 | | `checkpoint` | Log progress |
 | | `task_resume` | Resume previous session |
+| | `browser_action` | 🌐 Browser automation (navigate/click/verify) |
 | **Memory** | `memory_save` | Save knowledge (types: semantic, procedural, episodic, skill) |
 | | `memory_search` | Search memories (semantic similarity) |
 | | `memory_update` | Update existing memory |
@@ -40,7 +41,6 @@ That's it. Everything else is optional.
 | | `decision_search` | Query past decisions |
 | **Intelligence** | `file_context_scan` | 🛡️ Watchdog: Scan memories before modifying files |
 | | `session_postmortem` | 🔍 Auto-learn from failed sessions |
-| | `tool_wishlist` | 💡 Suggest missing tools/capabilities |
 
 
 ## Memory Types
