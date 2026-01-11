@@ -108,10 +108,41 @@ end_task("Fixed auth by adding expiry check")
 
 ### ✋ END_TASK CHECKLIST (before calling end_task, ask yourself:)
 
-1. **Did I make any decisions?** → `decision_log` for architectural choices
-2. **Did I learn something reusable?** → `memory_save` (procedural/episodic)
-3. **Is this new knowledge connected to existing?** → `memory_link`
-4. **Did I document my key findings?** → At least 1 `checkpoint` per significant step
+⚠️ **CRITICAL: The #1 rule is: Did I do what the USER asked?**
+
+**MANDATORY checks before end_task:**
+
+1. **🎯 Did I fulfill the ORIGINAL request?** (not just related work)
+   - If user said "visit pages and fix bugs" → Did I actually VISIT each page?
+   - If user said "test the feature" → Did I actually RUN the test?
+   - If user said "implement X" → Is X actually working?
+
+2. **📸 Did I VERIFY my work?** (not just code it)
+   - Run the tests
+   - Visit the URL
+   - Check the output
+
+3. **📝 Did I log at least 1 checkpoint?** (proof of work)
+
+4. **🔍 Did I make any decisions?** → `decision_log`
+
+5. **💾 Did I learn something reusable?** → `memory_save`
+
+**⛔ If you answer NO to #1 or #2, you CANNOT call end_task yet.**
+
+Call `end_task(request_fulfilled=false, remaining_work="...")` to get blocked and reminded.
+
+**Example of WRONG behavior:**
+```
+USER: "Visit all pages and report bugs"
+AGENT: *reads code* *doesn't visit pages* → end_task("Analyzed codebase") ❌ WRONG
+```
+
+**Example of CORRECT behavior:**
+```
+USER: "Visit all pages and report bugs"
+AGENT: *uses browser tool to visit each page* *checks for issues* → end_task(request_fulfilled=true, ...) ✅
+```
 
 ## Memory System
 

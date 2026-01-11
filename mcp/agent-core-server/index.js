@@ -533,14 +533,19 @@ function tracked(name, handler) {
 
 server.tool(
     "end_task",
-    `Quick way to finish a task.
+    `Finish a task. REQUIRES confirmation that the original request was fulfilled.
 
-Automatically builds work summary from your checkpoints.
-Just confirm what you accomplished.
+⚠️ IMPORTANT: You CANNOT end a task if you haven't done what the user asked.
+Before calling this, ask yourself:
+1. Did I actually DO what was requested (not just summarize)?
+2. If asked to "visit pages", did I visit them?
+3. If asked to "fix", did I verify the fix works?
 
-Use when you're done and want to wrap up quickly.`,
+If the answer is NO to any of these, do NOT call end_task yet.`,
     {
         summary: z.string().describe("One line: what did you accomplish?"),
+        request_fulfilled: z.boolean().describe("REQUIRED: Did you actually complete what the USER originally asked? Be honest."),
+        remaining_work: z.string().optional().describe("If request_fulfilled=false, what still needs to be done?"),
         verified: z.boolean().optional().describe("Did you test/verify the solution? (default: true)")
     },
     async (args) => {
@@ -557,6 +562,37 @@ Use when you're done and want to wrap up quickly.`,
         const workDone = checkpoints.map(cp => cp.note || cp.summary).filter(Boolean);
         workDone.push(args.summary);
 
+        // GUARD: Block premature ending if work not done
+        if (args.request_fulfilled === false) {
+            return {
+                content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        status: "BLOCKED",
+                        reason: "request_not_fulfilled",
+                        task: session.task_summary,
+                        remaining: args.remaining_work || "Not specified",
+                        action: "⛔ You cannot end the task yet. Complete the remaining work first, then call end_task again with request_fulfilled=true."
+                    })
+                }]
+            };
+        }
+
+        // Check for suspiciously short sessions (no checkpoints = likely rushed)
+        if (checkpoints.length === 0) {
+            return {
+                content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        status: "WARNING",
+                        message: "No progress checkpoints logged. Did you actually do the work?",
+                        task: session.task_summary,
+                        action: "If you truly completed the task, call checkpoint() first to log what you did, then end_task again."
+                    })
+                }]
+            };
+        }
+
         profileStmts.endSession.run(now(), session.id);
 
         const taskLower = session.task_summary.toLowerCase();
@@ -571,6 +607,7 @@ Use when you're done and want to wrap up quickly.`,
                     session: session.id.slice(0, 8),
                     task: session.task_summary,
                     verified: args.verified !== false,
+                    checkpoints: checkpoints.length,
                     work: workDone,
                     suggest: checkpoints.length >= 2 ? "memory_save" : null
                 })
