@@ -20,7 +20,7 @@ end_task("summary")
 
 That's it. Everything else is optional.
 
-## All 15 Tools
+## All 18 Tools
 
 | Category | Tool | Description |
 |----------|------|-------------|
@@ -28,17 +28,20 @@ That's it. Everything else is optional.
 | | `end_task` | Finish a task (auto-suggests skills) |
 | | `checkpoint` | Log progress |
 | | `task_resume` | Resume previous session |
-| | `skill_from_session` | Generate skill from checkpoints |
 | **Memory** | `memory_save` | Save knowledge (types: semantic, procedural, episodic, skill) |
-| | `memory_search` | Search memories |
+| | `memory_search` | Search memories (semantic similarity) |
 | | `memory_update` | Update existing memory |
 | | `memory_forget` | Delete obsolete memory |
 | | `memory_stats` | View memory statistics |
-| | `memory_cluster` | Find similar memories |
-| | `memory_compress` | Clean up old memories |
+| | `memory_maintain` | Find similar, merge, prune memories |
+| | `memory_link` | Connect related memories |
 | **Profile** | `profile_info` | View current profile |
 | **Decisions** | `decision_log` | Record technical decisions |
 | | `decision_search` | Query past decisions |
+| **Intelligence** | `file_context_scan` | 🛡️ Watchdog: Scan memories before modifying files |
+| | `session_postmortem` | 🔍 Auto-learn from failed sessions |
+| | `tool_wishlist` | 💡 Suggest missing tools/capabilities |
+
 
 ## Memory Types
 

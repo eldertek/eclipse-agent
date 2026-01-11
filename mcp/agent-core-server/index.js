@@ -1401,6 +1401,250 @@ server.tool(
 
 
 
+// ───────────────────────────────────────────────────────────────────────────
+// WATCHDOG: FILE CONTEXT SCAN (Proactive Memory Warnings)
+// ───────────────────────────────────────────────────────────────────────────
+
+server.tool(
+    "file_context_scan",
+    `🛡️ WATCHDOG: Proactively scan memories for context when touching a file.
+
+Call this BEFORE modifying any file to get automatic warnings about:
+- Past bugs related to this file/module
+- Important decisions made about this code
+- Related episodic memories (lessons learned)
+
+This is your "peripheral vision" - use it to avoid repeating past mistakes.`,
+    {
+        file_path: z.string().describe("The file path you're about to modify"),
+        operation: z.enum(["read", "modify", "delete"]).optional().describe("What you plan to do (default: modify)")
+    },
+    async (args) => {
+        trackTool("file_context_scan");
+        const filePath = args.file_path;
+        const operation = args.operation || "modify";
+
+        // Extract keywords from file path
+        const pathParts = filePath.toLowerCase().replace(/[^a-z0-9/]/g, ' ').split(/[/\s]+/).filter(p => p.length > 2);
+
+        // Common security/critical keywords to boost
+        const criticalKeywords = ['auth', 'login', 'password', 'token', 'session', 'security', 'api', 'key', 'secret', 'config', 'database', 'db', 'migration', 'deploy', 'payment', 'billing', 'user', 'admin', 'permission', 'role'];
+
+        // Find which critical keywords match
+        const matchedCritical = criticalKeywords.filter(kw => pathParts.some(p => p.includes(kw) || kw.includes(p)));
+
+        // Build search query from path keywords
+        const searchQuery = [...new Set([...pathParts, ...matchedCritical])].join(' ');
+
+        if (!searchQuery.trim()) {
+            return { content: [{ type: "text", text: JSON.stringify({ status: "no_context", file: filePath }) }] };
+        }
+
+        // Search memories with emphasis on episodic (past bugs) and procedural (how-to)
+        const memories = await semanticSearch(searchQuery, {
+            memoryTypes: ["episodic", "procedural", "semantic"],
+            limit: 5,
+            scope: "all"
+        });
+
+        // Search decisions related to this area
+        const decisionPattern = `%${pathParts.slice(0, 2).join('%')}%`;
+        const decisions = profileStmts.searchDecisions.all(decisionPattern, decisionPattern, 3);
+
+        // Format warnings
+        const warnings = [];
+
+        for (const m of memories) {
+            if (m.similarity && m.similarity > 0.3) {
+                const emoji = m.type === 'episodic' ? '⚠️' : m.type === 'procedural' ? '📋' : 'ℹ️';
+                warnings.push({
+                    level: m.similarity > 0.6 ? "high" : "medium",
+                    emoji,
+                    type: m.type,
+                    id: m.id.slice(0, 8),
+                    title: m.title,
+                    preview: m.content.slice(0, 100),
+                    match: Math.round(m.similarity * 100)
+                });
+            }
+        }
+
+        const relatedDecisions = decisions.map(d => ({
+            decision: d.decision,
+            context: d.context.slice(0, 60)
+        }));
+
+        const isCritical = matchedCritical.length > 0;
+
+        return {
+            content: [{
+                type: "text",
+                text: JSON.stringify({
+                    status: warnings.length > 0 ? "warnings_found" : "clear",
+                    file: filePath,
+                    operation,
+                    critical_area: isCritical ? matchedCritical : null,
+                    warnings: warnings.length > 0 ? warnings : null,
+                    related_decisions: relatedDecisions.length > 0 ? relatedDecisions : null,
+                    action: warnings.length > 0
+                        ? "⚠️ Review warnings above before proceeding. Past self left notes!"
+                        : "✅ No relevant memories found. Proceed with caution."
+                })
+            }]
+        };
+    }
+);
+
+// ───────────────────────────────────────────────────────────────────────────
+// AUTO-POST-MORTEM: Learn from Session Failures
+// ───────────────────────────────────────────────────────────────────────────
+
+server.tool(
+    "session_postmortem",
+    `🔍 AUTO-POST-MORTEM: Analyze a session's failures and extract lessons.
+
+Call this when:
+- A task failed or had many retries
+- You made mistakes during the session
+- The session had unexpected complications
+
+This turns failures into permanent learning. Returns a suggested memory to save.`,
+    {
+        session_id: z.string().optional().describe("Session to analyze (default: current/last)"),
+        failure_summary: z.string().describe("What went wrong in 1-2 sentences"),
+        root_cause: z.string().describe("Why it failed (your analysis)"),
+        lesson: z.string().describe("What to do differently next time")
+    },
+    async (args) => {
+        trackTool("session_postmortem");
+
+        // Get session
+        let session = args.session_id
+            ? profileStmts.getSessionById.get(args.session_id)
+            : profileStmts.getActiveSession.get() || profileStmts.getRecentSessions.all(1)[0];
+
+        if (!session) {
+            return { content: [{ type: "text", text: JSON.stringify({ error: "no_session_found" }) }], isError: true };
+        }
+
+        const checkpoints = JSON.parse(session.checkpoints || "[]");
+        const timestamp = now();
+
+        // Create the episodic memory content in structured format
+        const memoryContent = `FAILURE: ${args.failure_summary}
+
+ROOT CAUSE: ${args.root_cause}
+
+LESSON LEARNED: ${args.lesson}
+
+SESSION CONTEXT:
+- Task: ${session.task_summary}
+- Checkpoints: ${checkpoints.length}
+- Date: ${new Date(session.started_at).toISOString().split('T')[0]}`;
+
+        // Auto-save the episodic memory
+        const id = generateId();
+        const title = `Post-Mortem: ${session.task_summary.slice(0, 40)}`;
+        const tags = JSON.stringify(["postmortem", "failure", "lesson"]);
+
+        const textToEmbed = `${title} ${memoryContent}`;
+        const embedding = await generateEmbedding(textToEmbed);
+        const embeddingBuffer = embeddingToBuffer(embedding);
+
+        try {
+            profileStmts.insertMemory.run(
+                id, "episodic", "postmortem", title, memoryContent, tags, 1.0,
+                embeddingBuffer, session.id, timestamp, timestamp, timestamp
+            );
+
+            return {
+                content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        status: "lesson_saved",
+                        memory_id: id.slice(0, 8),
+                        title,
+                        type: "episodic",
+                        message: "🧠 Failure converted to wisdom. This lesson will surface in future similar tasks."
+                    })
+                }]
+            };
+        } catch (error) {
+            return { content: [{ type: "text", text: JSON.stringify({ error: error.message }) }], isError: true };
+        }
+    }
+);
+
+// ───────────────────────────────────────────────────────────────────────────
+// SELF-EVOLUTION FEEDBACK: Suggest Missing Tools
+// ───────────────────────────────────────────────────────────────────────────
+
+server.tool(
+    "tool_wishlist",
+    `💡 SELF-EVOLUTION: Record a tool or capability you wish you had.
+
+Use this when you think: "I wish I had a tool that could..."
+- This does NOT create the tool
+- It logs the suggestion for the human to review and potentially implement
+- Helps identify patterns in what's missing
+
+Be specific about what the tool should do and when you'd use it.`,
+    {
+        tool_name: z.string().describe("Suggested name for the tool (snake_case)"),
+        description: z.string().describe("What this tool should do"),
+        trigger: z.string().describe("When you would use this tool"),
+        example_use: z.string().optional().describe("Example invocation or use case"),
+        priority: z.enum(["low", "medium", "high"]).optional().describe("How much would this help? (default: medium)")
+    },
+    async (args) => {
+        trackTool("tool_wishlist");
+        const timestamp = now();
+        const id = generateId();
+        const priority = args.priority || "medium";
+
+        // Store as a special type of memory in the global scope (shared across projects)
+        const content = `TOOL SUGGESTION: ${args.tool_name}
+
+DESCRIPTION: ${args.description}
+
+TRIGGER: ${args.trigger}
+
+${args.example_use ? `EXAMPLE: ${args.example_use}` : ''}
+
+PRIORITY: ${priority}
+REQUESTED: ${timestamp}`;
+
+        const title = `Wishlist: ${args.tool_name}`;
+        const tags = JSON.stringify(["wishlist", "tool-suggestion", priority]);
+
+        const textToEmbed = `${title} ${content}`;
+        const embedding = await generateEmbedding(textToEmbed);
+        const embeddingBuffer = embeddingToBuffer(embedding);
+
+        try {
+            globalStmts.insertMemory.run(
+                id, "procedural", "tool-wishlist", title, content, tags, 0.8,
+                embeddingBuffer, null, timestamp, timestamp, timestamp
+            );
+
+            return {
+                content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        status: "suggestion_logged",
+                        id: id.slice(0, 8),
+                        tool: args.tool_name,
+                        priority,
+                        message: `💡 Tool suggestion saved. Run 'memory_search(query="wishlist")' to see all suggestions.`
+                    })
+                }]
+            };
+        } catch (error) {
+            return { content: [{ type: "text", text: JSON.stringify({ error: error.message }) }], isError: true };
+        }
+    }
+);
+
 // ═══════════════════════════════════════════════════════════════════════════
 // START SERVER
 // ═══════════════════════════════════════════════════════════════════════════

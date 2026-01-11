@@ -137,6 +137,105 @@ end_task("Fixed auth by adding expiry check")
 - Use `memory_maintain` with `find_similar` to find related memories
 - Use `memory_maintain` with `prune` to clean up old/unused memories
 
+## 🛡️ WATCHDOGS: Proactive Context Awareness
+
+**MANDATORY: Before modifying ANY file in a critical area, call `file_context_scan` first.**
+
+Critical areas include:
+- Authentication, authorization, security (`auth`, `login`, `token`, `session`, `permission`)
+- Configuration files (`config`, `.env`, `settings`)
+- Database operations (`db`, `migration`, `schema`)
+- Payment/billing logic (`payment`, `billing`, `stripe`)
+- API endpoints (`api`, `routes`, `controller`)
+
+### How to use:
+```
+file_context_scan(file_path="/path/to/auth.js", operation="modify")
+```
+
+### What it does:
+1. Extracts keywords from the file path
+2. Searches your episodic memories (past bugs, lessons learned)
+3. Finds related decisions you made before
+4. Returns warnings if your past self left notes
+
+### ⚠️ RULE: If warnings are returned, READ THEM before proceeding.
+
+Your past self debugged that exact area. Don't repeat the same mistakes.
+
+**Example output:**
+```json
+{
+  "status": "warnings_found",
+  "file": "/api/auth.js",
+  "critical_area": ["auth", "api"],
+  "warnings": [
+    {
+      "level": "high",
+      "emoji": "⚠️",
+      "type": "episodic",
+      "id": "abc123",
+      "title": "Token expiry bug in auth middleware",
+      "match": 78
+    }
+  ]
+}
+```
+
+## 🔍 AUTO-POST-MORTEM: Learning from Failures
+
+**When a task fails or has unexpected complications, ALWAYS call `session_postmortem`.**
+
+### Triggers (use `session_postmortem` when:)
+- You made 3+ attempts to fix something
+- The solution was different from your initial approach
+- You discovered an edge case the hard way
+- Tests failed unexpectedly
+- You caused a regression
+
+### How to use:
+```
+session_postmortem(
+  failure_summary="Auth middleware rejected valid tokens",
+  root_cause="Token comparison was using == instead of ===",
+  lesson="Always use strict equality for security-critical comparisons"
+)
+```
+
+### What it does:
+1. Creates an episodic memory tagged `postmortem`
+2. Links it to the current session context
+3. This lesson will **automatically surface** in future `begin_task` and `file_context_scan` calls
+
+**Your failures are your greatest teachers. Capture them.**
+
+## 💡 SELF-EVOLUTION: Tool Wishlist
+
+**When you think "I wish I had a tool that could...", call `tool_wishlist`.**
+
+### Triggers (use `tool_wishlist` when:)
+- You're doing something manually that could be automated
+- You need information that no existing tool provides
+- You find yourself repeating a pattern that should be a tool
+- A capability gap is blocking you
+
+### How to use:
+```
+tool_wishlist(
+  tool_name="code_dependency_graph",
+  description="Show all files that import or depend on a given file",
+  trigger="Before refactoring a widely-used module",
+  priority="high"
+)
+```
+
+### ⚠️ IMPORTANT:
+- This does NOT create the tool
+- It logs the suggestion for the human to review
+- Run `memory_search(query="wishlist")` to see all suggestions
+
+**You are NOT allowed to code MCP tools yourself. You can only suggest them.**
+
 ## Decision Logging
 
 ### 📝 DECISION_LOG TRIGGERS (log decisions when:)
