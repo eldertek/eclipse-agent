@@ -18,6 +18,7 @@ const Database = require("better-sqlite3");
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
+const { execSync } = require("child_process");
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -282,6 +283,77 @@ function cosineSimilarity(a, b) {
         dotProduct += a[i] * b[i];
     }
     return dotProduct; // Already normalized
+}
+
+// Spark: Git Context Awareness
+function getGitContext(cwd) {
+    try {
+        // Check if git repo
+        execSync("git rev-parse --is-inside-work-tree", { cwd, stdio: "ignore" });
+
+        const status = execSync("git status -s", { cwd, encoding: "utf-8" }).trim();
+        const branch = execSync("git branch --show-current", { cwd, encoding: "utf-8" }).trim();
+        const lastCommit = execSync("git log -1 --pretty=%s", { cwd, encoding: "utf-8" }).trim();
+
+        return {
+            branch,
+            last_commit: lastCommit,
+            dirty_files: status ? status.split('\n').length : 0,
+            status_preview: status ? status.slice(0, 200) + (status.length > 200 ? "..." : "") : "clean"
+        };
+    } catch (e) {
+        return null; // Not a git repo or error
+    }
+}
+
+// Spark: Detect Tech Stack (Project DNA)
+function detectProjectStack(cwd) {
+    const stack = {
+        language: "unknown",
+        framework: "none",
+        styling: "none",
+        test: "none",
+        build: "none"
+    };
+
+    try {
+        // Node.js Check
+        if (fs.existsSync(path.join(cwd, 'package.json'))) {
+            const pkg = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8'));
+            const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+
+            stack.language = deps['typescript'] ? 'TypeScript' : 'JavaScript';
+
+            if (deps['next']) stack.framework = 'Next.js';
+            else if (deps['react']) stack.framework = 'React';
+            else if (deps['vue']) stack.framework = 'Vue';
+            else if (deps['@angular/core']) stack.framework = 'Angular';
+            else if (deps['svelte']) stack.framework = 'Svelte';
+
+            if (deps['tailwindcss']) stack.styling = 'Tailwind CSS';
+            else if (deps['sass']) stack.styling = 'Sass';
+            else if (deps['styled-components']) stack.styling = 'Styled Components';
+
+            if (deps['vitest']) stack.test = 'Vitest';
+            else if (deps['jest']) stack.test = 'Jest';
+            else if (deps['mocha']) stack.test = 'Mocha';
+
+            if (deps['vite']) stack.build = 'Vite';
+            else if (deps['webpack']) stack.build = 'Webpack';
+        }
+        // Python Check
+        else if (fs.existsSync(path.join(cwd, 'requirements.txt')) || fs.existsSync(path.join(cwd, 'pyproject.toml'))) {
+            stack.language = 'Python';
+        }
+        // Go Check
+        else if (fs.existsSync(path.join(cwd, 'go.mod'))) {
+            stack.language = 'Go';
+        }
+    } catch (e) {
+        // Ignore errors
+    }
+
+    return stack;
 }
 
 function embeddingToBuffer(embedding) {
@@ -765,12 +837,20 @@ Current profile: ${CURRENT_PROFILE}`,
             actionRequired = "⚠️ READ ABOVE before working. Your past self may have already solved this.";
         }
 
+        // Spark: Git Context
+        const gitContext = getGitContext(process.cwd());
+
+        // Spark: Tech Stack Context
+        const userStack = detectProjectStack(process.cwd());
+
         const response = {
             status: "started",
             session: id.slice(0, 8),
             profile: CURRENT_PROFILE,
             task: args.task_summary,
             skill: skill !== "general" ? skillName : null,
+            git: gitContext, // Injected Git Awareness
+            stack: userStack, // Injected Project DNA
             memories: memories.length > 0 ? memories : null,
             decisions: decisions.length > 0 ? decisions : null,
             action_required: actionRequired
