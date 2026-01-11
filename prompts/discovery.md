@@ -4,7 +4,11 @@ Your mission is to EXPLORE the codebase to find ONE meaningful task to work on.
 
 ## Sherlock's Methodology
 
-1. **Investigate:** Use `list_dir`, `view_file_outline`, and `grep_search` to map the territory.
+1. **Forensics (Log Analysis):** 
+   - Before searching code, search EVIDENCE.
+   - Check available logs (e.g., `tail -n 50 log/error.log`).
+   - Look for stack traces, error codes (500, 404), and timestamps.
+2. **Investigate:** Use `list_dir`, `view_file_outline`, and `grep_search` to map the territory.
 2. **Deduce:** Look for:
    - `TODO`, `FIXME`, `HACK` comments
    - Large, complex files (potential refactor candidates)

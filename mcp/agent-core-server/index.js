@@ -1038,7 +1038,7 @@ Be PARSIMONIOUS: only save what's genuinely useful for future work.`,
             );
 
             // Bolt: Invalidate cache for this scope
-            invalidateMemoryCache(targetScope);
+            invalidateMemoryCache(scope);
 
             return {
                 content: [{
