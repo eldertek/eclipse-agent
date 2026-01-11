@@ -63,6 +63,10 @@ Activate specialized personas with `begin_task(skill: "...")`:
 | `security` | 🛡️ Sentinel | Vulnerability detection, hardening |
 | `review` | 🔍 Reviewer | Post-project introspection |
 | `discovery` | 🕵️ Sherlock | Codebase exploration & task finding |
+| `innovation` | ✨ Spark | Product ideas & features |
+| `architecture` | 🏛️ Atlas | Structure & Refactoring |
+| `test` | 🎯 Hunter | Testing & QA |
+| `documentation` | 📜 Scribe | Docs & Guides |
 | `general` | - | No specialized prompt (default) |
 
 Skills load prompts from `/prompts/{skill}.md`.

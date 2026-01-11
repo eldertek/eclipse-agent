@@ -674,6 +674,10 @@ Skills available:
 - security: 🛡️ Sentinel - Security hardening focus
 - review: 🔍 Post-project introspection
 - discovery: 🕵️ Sherlock - Find tasks/bugs
+- innovation: ✨ Spark - Product ideas & features
+- architecture: 🏛️ Atlas - Structure & Refactoring
+- test: 🎯 Hunter - Testing & QA
+- documentation: 📜 Scribe - Docs & Guides
 - general: No specialized prompt (default)
 
 Just call this ONCE at the start, then get to work.
@@ -681,7 +685,7 @@ Just call this ONCE at the start, then get to work.
 Current profile: ${CURRENT_PROFILE}`,
     {
         task_summary: z.string().describe("Brief description of what you're about to do"),
-        skill: z.enum(["design", "performance", "security", "review", "discovery", "general"]).optional().describe("Specialized skill/persona to activate (default: general)")
+        skill: z.enum(["design", "performance", "security", "review", "discovery", "innovation", "architecture", "test", "documentation", "general"]).optional().describe("Specialized skill/persona to activate (default: general)")
     },
     async (args) => {
         trackTool("begin_task");
@@ -729,7 +733,11 @@ Current profile: ${CURRENT_PROFILE}`,
                 performance: "⚡ Bolt",
                 security: "🛡️ Sentinel",
                 review: "🔍 Reviewer",
-                discovery: "🕵️ Sherlock"
+                discovery: "🕵️ Sherlock",
+                innovation: "✨ Spark",
+                architecture: "🏛️ Atlas",
+                test: "🎯 Hunter",
+                documentation: "📜 Scribe"
             };
             skillName = skillEmojis[skill] || skill;
 
