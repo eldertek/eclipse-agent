@@ -916,6 +916,110 @@ Current profile: ${CURRENT_PROFILE}`,
 );
 
 server.tool(
+    "update_task",
+    `Update the current task status or switch skill/persona without ending the session.
+    
+Use this when:
+- You finish one phase (e.g. Discovery) and move to another (e.g. Fixing)
+- You want to change your active persona/skill
+- You want to clarify/refine the task objective
+
+Returns the new skill prompt if a skill is specified.`,
+    {
+        skill: z.enum(["design", "performance", "security", "review", "discovery", "innovation", "architecture", "test", "documentation", "browser", "general"]).optional().describe("New skill/persona to activate"),
+        task_summary: z.string().optional().describe("New description of the task if it has changed"),
+        status_update: z.string().optional().describe("Status update (e.g., 'Moving to testing phase'). Updates 'current_phase'.")
+    },
+    async (args) => {
+        trackTool("update_task");
+
+        // Get active session
+        const active = profileStmts.getActiveSession.get();
+        if (!active) {
+            return { content: [{ type: "text", text: JSON.stringify({ error: "no_active_session", message: "Call begin_task first." }) }], isError: true };
+        }
+
+        const updates = [];
+        let skillPrompt = null;
+        let skillName = args.skill;
+
+        // 1. Handle Skill Switch (Chargement Prompt)
+        if (args.skill && args.skill !== "general") {
+            const skill = args.skill;
+            const skillEmojis = {
+                design: "🎨 Palette",
+                performance: "⚡ Bolt",
+                security: "🛡️ Sentinel",
+                review: "🔍 Reviewer",
+                discovery: "🕵️ Sherlock",
+                innovation: "✨ Spark",
+                architecture: "🏛️ Atlas",
+                test: "🎯 Hunter",
+                documentation: "📜 Scribe",
+                browser: "🧭 Navigator"
+            };
+            skillName = skillEmojis[skill] || skill;
+
+            // Load prompt (Logic duplicated from begin_task for safety)
+            const promptPaths = [
+                path.join(process.env.HOME, "eclipse-agent", "prompts", `${skill}.md`),
+                path.join(__dirname, "..", "..", "prompts", `${skill}.md`)
+            ];
+
+            for (const promptPath of promptPaths) {
+                try {
+                    if (fs.existsSync(promptPath)) {
+                        skillPrompt = fs.readFileSync(promptPath, "utf-8");
+                        break;
+                    }
+                } catch (err) { }
+            }
+            updates.push(`Switched skill to ${skillName}`);
+        } else if (args.skill === "general") {
+            updates.push("Switched skill to General");
+            skillName = "General";
+        }
+
+        // 2. Prepare DB Updates
+        let newPhase = active.current_phase;
+        let newSummary = active.task_summary;
+        let checkpoints = active.checkpoints; // Keep existing
+
+        if (args.status_update) {
+            newPhase = args.status_update;
+            updates.push(`Status updated: ${newPhase}`);
+        }
+
+        if (args.task_summary) {
+            newSummary = args.task_summary;
+            updates.push(`Task updated: ${newSummary}`);
+        }
+
+        // 3. Update Session in DB
+        profileStmts.updateSession.run(newPhase, checkpoints, newSummary, active.id);
+
+        // 4. Build Response
+        const responseJson = {
+            id: active.id.slice(0, 8),
+            updates: updates,
+            current_task: newSummary,
+            current_phase: newPhase
+        };
+
+        const contentBlocks = [{ type: "text", text: JSON.stringify(responseJson) }];
+
+        if (skillPrompt) {
+            contentBlocks.push({
+                type: "text",
+                text: `\n\n--- SKILL ACTIVATED: ${skillName} ---\n\n${skillPrompt}`
+            });
+        }
+
+        return { content: contentBlocks };
+    }
+);
+
+server.tool(
     "task_resume",
     `Resume previous session or list recent sessions. Returns JSON.`,
     {
