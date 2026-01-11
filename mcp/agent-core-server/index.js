@@ -94,6 +94,48 @@ function initDatabase(dbPath) {
     const db = new Database(dbPath);
     db.pragma("journal_mode = WAL");
 
+    // Atlas: Auto-migration for 'skill' type support
+    try {
+        const hasTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='memories'").get();
+        if (hasTable) {
+            try {
+                // Try inserting a dummy skill memory to test constraint
+                db.prepare("INSERT INTO memories (id, type, category, title, content, created_at, updated_at, last_accessed) VALUES ('_migration_check_', 'skill', 'sys', 'sys', 'sys', '0', '0', '0')").run();
+                db.prepare("DELETE FROM memories WHERE id = '_migration_check_'").run();
+            } catch (e) {
+                if (e.message.includes('CHECK constraint failed')) {
+                    // Perform Migration
+                    db.transaction(() => {
+                        db.exec("ALTER TABLE memories RENAME TO memories_old");
+                        db.exec(`
+                            CREATE TABLE memories (
+                              id TEXT PRIMARY KEY,
+                              type TEXT NOT NULL CHECK(type IN ('semantic', 'procedural', 'episodic', 'skill')),
+                              category TEXT NOT NULL,
+                              title TEXT NOT NULL,
+                              content TEXT NOT NULL,
+                              tags TEXT DEFAULT '[]',
+                              confidence REAL DEFAULT 1.0,
+                              embedding BLOB,
+                              source_context TEXT,
+                              created_at TEXT NOT NULL,
+                              updated_at TEXT NOT NULL,
+                              last_accessed TEXT NOT NULL,
+                              access_count INTEGER DEFAULT 0
+                            );
+                         `);
+                        db.exec("INSERT INTO memories SELECT * FROM memories_old");
+                        db.exec("DROP TABLE memories_old");
+                        db.exec("CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type)");
+                        db.exec("CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category)");
+                    })();
+                }
+            }
+        }
+    } catch (e) {
+        // Ignore errors during migration check
+    }
+
     db.exec(`
     -- Long-term memory table with embedding support
     CREATE TABLE IF NOT EXISTS memories (
@@ -749,7 +791,9 @@ Skills available:
 - innovation: ✨ Spark - Product ideas & features
 - architecture: 🏛️ Atlas - Structure & Refactoring
 - test: 🎯 Hunter - Testing & QA
+- test: 🎯 Hunter - Testing & QA
 - documentation: 📜 Scribe - Docs & Guides
+- browser: 🧭 Navigator - Web exploration & testing
 - general: No specialized prompt (default)
 
 Just call this ONCE at the start, then get to work.
@@ -757,7 +801,7 @@ Just call this ONCE at the start, then get to work.
 Current profile: ${CURRENT_PROFILE}`,
     {
         task_summary: z.string().describe("Brief description of what you're about to do"),
-        skill: z.enum(["design", "performance", "security", "review", "discovery", "innovation", "architecture", "test", "documentation", "general"]).optional().describe("Specialized skill/persona to activate (default: general)")
+        skill: z.enum(["design", "performance", "security", "review", "discovery", "innovation", "architecture", "test", "documentation", "browser", "general"]).optional().describe("Specialized skill/persona to activate (default: general)")
     },
     async (args) => {
         trackTool("begin_task");
@@ -809,7 +853,8 @@ Current profile: ${CURRENT_PROFILE}`,
                 innovation: "✨ Spark",
                 architecture: "🏛️ Atlas",
                 test: "🎯 Hunter",
-                documentation: "📜 Scribe"
+                documentation: "📜 Scribe",
+                browser: "🧭 Navigator"
             };
             skillName = skillEmojis[skill] || skill;
 
@@ -1618,6 +1663,101 @@ server.tool(
 );
 
 
+
+// ───────────────────────────────────────────────────────────────────────────
+// BROWSER UI ACTIONS (Spark Feature)
+// ───────────────────────────────────────────────────────────────────────────
+
+let browserInstance = null;
+let pageInstance = null;
+
+async function getBrowserPage() {
+    if (pageInstance && !pageInstance.isClosed()) return pageInstance;
+
+    // Lazy load puppeteer to avoid startup penalty if not used
+    try {
+        const puppeteer = require('puppeteer');
+        browserInstance = await puppeteer.launch({
+            headless: "new",
+            args: ['--no-sandbox', '--disable-setuid-sandbox']
+        });
+        pageInstance = await browserInstance.newPage();
+        await pageInstance.setViewport({ width: 1280, height: 800 });
+        return pageInstance;
+    } catch (e) {
+        throw new Error("Puppeteer not installed or failed to launch: " + e.message);
+    }
+}
+
+server.tool(
+    "browser_action",
+    "Interact with a headless browser (Puppeteer) to test usage flows. Navigate, click, type, and evaluate JS.",
+    {
+        action: z.enum(["navigate", "click", "type", "screenshot", "evaluate", "close", "read"]).describe("Action to perform"),
+        url: z.string().optional().describe("URL for navigate"),
+        selector: z.string().optional().describe("CSS selector for click/type/read"),
+        text: z.string().optional().describe("Text input for type"),
+        script: z.string().optional().describe("Function body string for evaluate (e.g. 'return document.title')"),
+        path: z.string().optional().describe("Path for screenshot save")
+    },
+    async (args) => {
+        trackTool("browser_action");
+        try {
+            if (args.action === "close") {
+                if (browserInstance) await browserInstance.close();
+                browserInstance = null;
+                pageInstance = null;
+                return { content: [{ type: "text", text: "Browser closed." }] };
+            }
+
+            const page = await getBrowserPage();
+
+            if (args.action === "navigate") {
+                if (!args.url) throw new Error("URL required for navigate");
+                await page.goto(args.url, { waitUntil: 'networkidle2', timeout: 30000 });
+                return { content: [{ type: "text", text: `Navigated to ${args.url}` }] };
+            }
+
+            if (args.action === "click") {
+                if (!args.selector) throw new Error("Selector required for click");
+                await page.waitForSelector(args.selector, { timeout: 5000 });
+                await page.click(args.selector);
+                return { content: [{ type: "text", text: `Clicked ${args.selector}` }] };
+            }
+
+            if (args.action === "type") {
+                if (!args.selector || args.text === undefined) throw new Error("Selector and text required for type");
+                await page.waitForSelector(args.selector, { timeout: 5000 });
+                await page.type(args.selector, args.text);
+                return { content: [{ type: "text", text: `Typed "${args.text}" into ${args.selector}` }] };
+            }
+
+            if (args.action === "read") {
+                if (!args.selector) throw new Error("Selector required for read");
+                await page.waitForSelector(args.selector, { timeout: 5000 });
+                const content = await page.$eval(args.selector, el => el.innerText);
+                return { content: [{ type: "text", text: content }] };
+            }
+
+            if (args.action === "evaluate") {
+                if (!args.script) throw new Error("Script required for evaluate");
+                const result = await page.evaluate(new Function(args.script));
+                return { content: [{ type: "text", text: JSON.stringify(result) }] };
+            }
+
+            if (args.action === "screenshot") {
+                const targetPath = args.path || path.join(process.cwd(), `screenshot_${Date.now()}.png`);
+                await page.screenshot({ path: targetPath, fullPage: true });
+                return { content: [{ type: "text", text: `Screenshot saved to ${targetPath}` }] };
+            }
+
+            return { content: [{ type: "text", text: "Unknown action" }] };
+
+        } catch (error) {
+            return { content: [{ type: "text", text: JSON.stringify({ error: error.message, stack: error.stack }) }], isError: true };
+        }
+    }
+);
 
 // ───────────────────────────────────────────────────────────────────────────
 // WATCHDOG: FILE CONTEXT SCAN (Proactive Memory Warnings)
