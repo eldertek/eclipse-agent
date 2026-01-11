@@ -52,6 +52,20 @@ That's it. Everything else is optional.
 | `episodic` | Past experiences | Decisions, errors, lessons learned |
 | `skill` | Structured how-to | TRIGGER/STEPS/RELATED format |
 
+## Skills / Personas
+
+Activate specialized personas with `begin_task(skill: "...")`:
+
+| Skill | Persona | Focus |
+|-------|---------|-------|
+| `design` | 🎨 Palette | UX, accessibility, visual polish |
+| `performance` | ⚡ Bolt | Speed optimization, efficiency |
+| `security` | 🛡️ Sentinel | Vulnerability detection, hardening |
+| `review` | 🔍 Reviewer | Post-project introspection |
+| `general` | - | No specialized prompt (default) |
+
+Skills load prompts from `/prompts/{skill}.md`.
+
 ## Update
 
 ```bash

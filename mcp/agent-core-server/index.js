@@ -644,18 +644,28 @@ Automatically:
 - Creates a tracking session
 - Searches memory for relevant knowledge
 - Finds similar past decisions
+- Loads specialized persona/skill if specified
 - Returns everything you need to start
+
+Skills available:
+- design: 🎨 Palette - UX/accessibility focus
+- performance: ⚡ Bolt - Speed optimization focus
+- security: 🛡️ Sentinel - Security hardening focus
+- review: 🔍 Post-project introspection
+- general: No specialized prompt (default)
 
 Just call this ONCE at the start, then get to work.
 
 Current profile: ${CURRENT_PROFILE}`,
     {
-        task_summary: z.string().describe("Brief description of what you're about to do")
+        task_summary: z.string().describe("Brief description of what you're about to do"),
+        skill: z.enum(["design", "performance", "security", "review", "general"]).optional().describe("Specialized skill/persona to activate (default: general)")
     },
     async (args) => {
         trackTool("begin_task");
         const id = generateId();
         const timestamp = now();
+        const skill = args.skill || "general";
 
         // End any existing active session
         const active = profileStmts.getActiveSession.get();
@@ -675,6 +685,7 @@ Current profile: ${CURRENT_PROFILE}`,
         // Auto decision search
         const searchPattern = `%${args.task_summary.split(' ').slice(0, 3).join('%')}%`;
         const decisionResults = profileStmts.searchDecisions.all(searchPattern, searchPattern, 3);
+
         // Build JSON output
         const memories = memoryResults.map(m => ({
             title: m.title,
@@ -687,26 +698,64 @@ Current profile: ${CURRENT_PROFILE}`,
             reason: d.rationale.slice(0, 60)
         }));
 
+        // Load skill prompt if not "general"
+        let skillPrompt = null;
+        let skillName = null;
+        if (skill !== "general") {
+            const skillEmojis = {
+                design: "🎨 Palette",
+                performance: "⚡ Bolt",
+                security: "🛡️ Sentinel",
+                review: "🔍 Reviewer"
+            };
+            skillName = skillEmojis[skill] || skill;
+
+            // Try to load prompt from eclipse-agent/prompts/ directory
+            const promptPaths = [
+                path.join(process.env.HOME, "eclipse-agent", "prompts", `${skill}.md`),
+                path.join(__dirname, "..", "..", "prompts", `${skill}.md`)
+            ];
+
+            for (const promptPath of promptPaths) {
+                try {
+                    if (fs.existsSync(promptPath)) {
+                        skillPrompt = fs.readFileSync(promptPath, "utf-8");
+                        break;
+                    }
+                } catch (err) {
+                    // Skip if file not found
+                }
+            }
+        }
+
         // Build action required message based on what was found
         let actionRequired = null;
         if (memories.length > 0 || decisions.length > 0) {
             actionRequired = "⚠️ READ ABOVE before working. Your past self may have already solved this.";
         }
 
-        return {
-            content: [{
-                type: "text",
-                text: JSON.stringify({
-                    status: "started",
-                    session: id.slice(0, 8),
-                    profile: CURRENT_PROFILE,
-                    task: args.task_summary,
-                    memories: memories.length > 0 ? memories : null,
-                    decisions: decisions.length > 0 ? decisions : null,
-                    action_required: actionRequired
-                })
-            }]
+        const response = {
+            status: "started",
+            session: id.slice(0, 8),
+            profile: CURRENT_PROFILE,
+            task: args.task_summary,
+            skill: skill !== "general" ? skillName : null,
+            memories: memories.length > 0 ? memories : null,
+            decisions: decisions.length > 0 ? decisions : null,
+            action_required: actionRequired
         };
+
+        // If skill prompt exists, add it as a separate content block
+        const contentBlocks = [{ type: "text", text: JSON.stringify(response) }];
+
+        if (skillPrompt) {
+            contentBlocks.push({
+                type: "text",
+                text: `\n\n--- SKILL PROMPT: ${skillName} ---\n\n${skillPrompt}`
+            });
+        }
+
+        return { content: contentBlocks };
     }
 );
 
