@@ -902,6 +902,16 @@ Current profile: ${CURRENT_PROFILE}`,
             actionRequired = "⚠️ READ ABOVE before working. Your past self may have already solved this.";
         }
 
+        // Watchdog: Detect critical task keywords that warrant file_context_scan
+        const criticalKeywords = ['fix', 'bug', 'auth', 'config', 'security', 'payment', 'token', 'password', 'migration', 'database'];
+        const taskLower = args.task_summary.toLowerCase();
+        const hasCriticalContext = criticalKeywords.some(kw => taskLower.includes(kw));
+
+        let safetyReminder = null;
+        if (hasCriticalContext) {
+            safetyReminder = "🛡️ CRITICAL TASK DETECTED: Consider running `file_context_scan` before modifying core files.";
+        }
+
         // Spark: Git Context
         const gitContext = getGitContext(process.cwd());
 
@@ -918,7 +928,8 @@ Current profile: ${CURRENT_PROFILE}`,
             stack: userStack, // Injected Project DNA
             memories: memories.length > 0 ? memories : null,
             decisions: decisions.length > 0 ? decisions : null,
-            action_required: actionRequired
+            action_required: actionRequired,
+            safety_reminder: safetyReminder
         };
 
         // If skill prompt exists, add it as a separate content block
@@ -1226,7 +1237,8 @@ Be PARSIMONIOUS: only save what's genuinely useful for future work.`,
                         category: args.category,
                         title: args.title,
                         scope,
-                        embedding: !!embedding
+                        embedding: !!embedding,
+                        suggest: "memory_link"
                     })
                 }]
             };

@@ -101,7 +101,9 @@ You CANNOT finish a task (`end_task`) until you:
 
 - You save a new memory related to an existing one
 - You discover connections between concepts
-- After memory_save, ALWAYS consider: "Is this related to other memories?"
+- **After `memory_save`, the tool will suggest `memory_link`. FOLLOW IT.**
+
+⚠️ **USAGE: 0%** - This is the least used tool. Build the knowledge graph!
 
 **Example flow:**
 ```

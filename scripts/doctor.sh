@@ -167,7 +167,7 @@ elif [ -d "$PROFILES_DIR" ]; then
         echo "  ────────────────────────────  ─────"
         
         # Define ALL expected tools for tracking completeness
-        ALL_TOOLS="begin_task end_task update_task task_resume checkpoint memory_save memory_search memory_update memory_forget memory_link memory_stats memory_maintain profile_info decision_log decision_search file_context_scan session_postmortem browser_action"
+        ALL_TOOLS="begin_task end_task update_task task_resume checkpoint memory_save memory_search memory_update memory_forget memory_link memory_stats memory_maintain profile_info decision_log decision_search file_context_scan session_postmortem browser_action git_commit"
         
         # Aggregate and calculate stats
         awk -F'|' -v all_tools="$ALL_TOOLS" '
