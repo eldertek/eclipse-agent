@@ -68,6 +68,7 @@ Activate specialized personas with `begin_task(skill: "...")`:
 | `test` | 🎯 Hunter | Testing & QA |
 | `documentation` | 📜 Scribe | Docs & Guides |
 | `browser` | 🧭 Navigator | Web exploration & testing |
+| `translate` | 🌍 Polyglot | i18n & Localization (Strict Parity) |
 | `general` | - | No specialized prompt (default) |
 
 Skills load prompts from `/prompts/{skill}.md`.

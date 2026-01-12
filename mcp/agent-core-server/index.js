@@ -812,6 +812,7 @@ Skills available:
 - test: 🎯 Hunter - Testing & QA
 - documentation: 📜 Scribe - Docs & Guides
 - browser: 🧭 Navigator - Web exploration & testing
+- translate: 🌍 Polyglot - i18n & Localization
 - general: No specialized prompt (default)
 
 Just call this ONCE at the start, then get to work.
@@ -819,7 +820,7 @@ Just call this ONCE at the start, then get to work.
 Current profile: ${CURRENT_PROFILE}`,
     {
         task_summary: z.string().describe("Brief description of what you're about to do"),
-        skill: z.enum(["design", "performance", "security", "review", "discovery", "innovation", "architecture", "test", "documentation", "browser", "general"]).optional().describe("Specialized skill/persona to activate (default: general)")
+        skill: z.enum(["design", "performance", "security", "review", "discovery", "innovation", "architecture", "test", "documentation", "browser", "translate", "general"]).optional().describe("Specialized skill/persona to activate (default: general)")
     },
     async (args) => {
         trackTool("begin_task");
@@ -872,7 +873,8 @@ Current profile: ${CURRENT_PROFILE}`,
                 architecture: "🏛️ Atlas",
                 test: "🎯 Hunter",
                 documentation: "📜 Scribe",
-                browser: "🧭 Navigator"
+                browser: "🧭 Navigator",
+                translate: "🌍 Polyglot"
             };
             skillName = skillEmojis[skill] || skill;
 
@@ -944,7 +946,7 @@ Use this when:
 
 Returns the new skill prompt if a skill is specified.`,
     {
-        skill: z.enum(["design", "performance", "security", "review", "discovery", "innovation", "architecture", "test", "documentation", "browser", "general"]).optional().describe("New skill/persona to activate"),
+        skill: z.enum(["design", "performance", "security", "review", "discovery", "innovation", "architecture", "test", "documentation", "browser", "translate", "general"]).optional().describe("New skill/persona to activate"),
         task_summary: z.string().optional().describe("New description of the task if it has changed"),
         status_update: z.string().optional().describe("Status update (e.g., 'Moving to testing phase'). Updates 'current_phase'.")
     },
