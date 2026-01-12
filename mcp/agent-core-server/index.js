@@ -709,6 +709,8 @@ If these are truly not applicable (e.g., pure research), you must explicitly set
         }
 
         const checkpoints = JSON.parse(session.checkpoints || "[]");
+        const workDone = checkpoints.map(cp => cp.note || cp.summary).filter(Boolean);
+        workDone.push(args.summary);
 
         // GUARD 1: Block premature ending if active request not fulfilled
         if (args.request_fulfilled === false) {
@@ -1118,6 +1120,13 @@ server.tool(
 
         profileStmts.updateSession.run(session.current_phase, JSON.stringify(checkpoints), null, session.id);
 
+        let suggest = args.importance === "high" ? "memory_save" : null;
+
+        // AUTO-DETECT Decision keywords to encourage decision logging
+        if (args.note.match(/(\bdecid|\bcho(se|ose)|\bselect|\bopted|\bprefer|instead of)/i)) {
+            suggest = "decision_log";
+        }
+
         return {
             content: [{
                 type: "text",
@@ -1125,7 +1134,7 @@ server.tool(
                     status: "logged",
                     checkpoint: checkpoints.length,
                     note: args.note,
-                    suggest: args.importance === "high" ? "memory_save" : null
+                    suggest: suggest
                 })
             }]
         };
