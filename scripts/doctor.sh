@@ -161,39 +161,44 @@ elif [ -d "$PROFILES_DIR" ]; then
         fi
     done
     
-    if [ -s "$TEMP_STATS" ]; then
+    if [ -s "$TEMP_STATS" ] || [ -f "$PROFILES_DIR/global/memory.db" ]; then
         echo ""
-        echo "  Tool                    Calls"
-        echo "  ────────────────────────────"
+        echo "  Tool                    Calls   Freq"
+        echo "  ────────────────────────────  ─────"
         
-        # Aggregate and sort by call count
-        awk -F'|' '{
-            tools[$1] += $2
-        } END {
-            for (t in tools) print tools[t] "|" t
-        }' "$TEMP_STATS" | sort -t'|' -k1 -nr | head -10 | while IFS='|' read -r calls tool; do
-            printf "  %-22s %5s\n" "$tool" "$calls"
-        done
+        # Define ALL expected tools for tracking completeness
+        ALL_TOOLS="begin_task end_task update_task task_resume checkpoint memory_save memory_search memory_update memory_forget memory_link memory_stats memory_maintain profile_info decision_log decision_search file_context_scan session_postmortem browser_action"
         
-        echo ""
-        
-        # Show never used tools
-        ALL_TOOLS="begin_task end_task checkpoint task_resume memory_save memory_search memory_update memory_forget memory_stats memory_maintain profile_info decision_log decision_search"
-        
-        NEVER_USED=""
-        for tool in $ALL_TOOLS; do
-            if ! grep -q "^$tool|" "$TEMP_STATS" 2>/dev/null; then
-                NEVER_USED="$NEVER_USED $tool"
+        # Aggregate and calculate stats
+        awk -F'|' -v all_tools="$ALL_TOOLS" '
+        BEGIN {
+           split(all_tools, expected, " ")
+           for (i in expected) tools[expected[i]] = 0
+        }
+        {
+           if ($1 != "") tools[$1] += $2
+        }
+        END {
+           total = 0
+           for (t in tools) total += tools[t]
+           
+           for (t in tools) {
+               pct = (total > 0) ? (tools[t] / total * 100) : 0
+               printf "%s|%d|%.1f\n", t, tools[t], pct
+           }
+        }' "$TEMP_STATS" | sort -t'|' -k2 -nr | while IFS='|' read -r tool calls pct; do
+            if [ "$calls" -eq 0 ]; then
+                # Dimmed/Gray for unused tools to highlight gaps
+                printf "  \033[2m%-22s %5d   %5.1f%%\033[0m\n" "$tool" "$calls" "$pct"
+            else
+                printf "  %-22s %5d   %5.1f%%\n" "$tool" "$calls" "$pct"
             fi
         done
         
-        if [ -n "$NEVER_USED" ]; then
-            warn "Never used:$NEVER_USED"
-        else
-            ok "All tools have been used at least once"
-        fi
+        echo ""
+        ok "Usage statistics generated"
     else
-        info "No tool usage data yet"
+        info "No tool usage data available yet"
     fi
     
     rm -f "$TEMP_STATS"
