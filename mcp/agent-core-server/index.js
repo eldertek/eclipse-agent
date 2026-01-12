@@ -683,19 +683,20 @@ function tracked(name, handler) {
 server.tool(
     "end_task",
     `Finish a task. REQUIRES confirmation that the original request was fulfilled.
+    
+⚠️ QUALITY GATES ENFORCED:
+You CANNOT end a task unless you confirm:
+1. Tests were created/updated/verified (Hunter)
+2. Documentation was updated (Scribe)
 
-⚠️ IMPORTANT: You CANNOT end a task if you haven't done what the user asked.
-Before calling this, ask yourself:
-1. Did I actually DO what was requested (not just summarize)?
-2. If asked to "visit pages", did I visit them?
-3. If asked to "fix", did I verify the fix works?
-
-If the answer is NO to any of these, do NOT call end_task yet.`,
+If these are truly not applicable (e.g., pure research), you must explicitly set them to true and explain in summary.`,
     {
         summary: z.string().describe("One line: what did you accomplish?"),
         request_fulfilled: z.boolean().describe("REQUIRED: Did you actually complete what the USER originally asked? Be honest."),
         remaining_work: z.string().optional().describe("If request_fulfilled=false, what still needs to be done?"),
-        verified: z.boolean().optional().describe("Did you test/verify the solution? (default: true)")
+        verified: z.boolean().optional().describe("Did you test/verify the solution? (default: true)"),
+        tests_passed: z.boolean().describe("REQUIRED: Did you create/update tests and did they pass? (Hunter)"),
+        documentation_updated: z.boolean().describe("REQUIRED: Did you update related documentation? (Scribe)")
     },
     async (args) => {
         trackTool("end_task");
@@ -708,10 +709,8 @@ If the answer is NO to any of these, do NOT call end_task yet.`,
         }
 
         const checkpoints = JSON.parse(session.checkpoints || "[]");
-        const workDone = checkpoints.map(cp => cp.note || cp.summary).filter(Boolean);
-        workDone.push(args.summary);
 
-        // GUARD: Block premature ending if work not done
+        // GUARD 1: Block premature ending if active request not fulfilled
         if (args.request_fulfilled === false) {
             return {
                 content: [{
@@ -727,7 +726,24 @@ If the answer is NO to any of these, do NOT call end_task yet.`,
             };
         }
 
-        // Check for suspiciously short sessions (no checkpoints = likely rushed)
+        // GUARD 2: Quality Gates (Hunter & Scribe)
+        // We only enforce this if request_fulfilled is true
+        if (args.request_fulfilled && (!args.tests_passed || !args.documentation_updated)) {
+            return {
+                content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        status: "BLOCKED",
+                        reason: "quality_gates_failed",
+                        tests_passed: args.tests_passed,
+                        documentation_updated: args.documentation_updated,
+                        action: "⛔ QUALITY GATE: Antigravity Protocol requires Tests (Hunter) and Docs (Scribe). Create/Run tests and update documentation before closing. If N/A, confirm you have evaluated the need."
+                    })
+                }]
+            };
+        }
+
+        // GUARD 3: Check for suspiciously short sessions (no checkpoints = likely rushed)
         if (checkpoints.length === 0) {
             return {
                 content: [{

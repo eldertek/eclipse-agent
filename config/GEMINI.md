@@ -73,7 +73,14 @@ Treat them as integral to your work, like testing code after writing it.
 2. understand        ← Read, clarify
 3. execute           ← Make changes, use checkpoint for progress
 4. end_task          ← MANDATORY before stopping
-```
+
+## 🛡️ MANDATORY QUALITY GATES
+
+You CANNOT finish a task (`end_task`) until you:
+1. **Tests (Hunter)**: Create or update tests to verify your work.
+2. **Docs (Scribe)**: Update documentation (README, JSDoc, etc.) to reflect changes.
+
+**If you skip this, `end_task` will BLOCK YOU.**
 
 ### ⚡ CHECKPOINT TRIGGERS (use `checkpoint` when:)
 
