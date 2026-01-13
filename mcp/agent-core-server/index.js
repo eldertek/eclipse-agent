@@ -813,7 +813,10 @@ Skills available:
 - documentation: 📜 Scribe - Docs & Guides
 - browser: 🧭 Navigator - Web exploration & testing
 - translate: 🌍 Polyglot - i18n & Localization
-- blender: 🎨 Blender - 3D & Visualization focus
+- translate: 🌍 Polyglot - i18n & Localization
+- blender-video: 🎬 Director - 3 min Storytelling
+- blender-teaser: ⚡ Promo - 30s High Impact
+- blender-image: 🖼️ Studio - Still Image & Wallpaper
 - general: No specialized prompt (default)
 
 Just call this ONCE at the start, then get to work.
@@ -821,7 +824,7 @@ Just call this ONCE at the start, then get to work.
 Current profile: ${CURRENT_PROFILE}`,
     {
         task_summary: z.string().describe("Brief description of what you're about to do"),
-        skill: z.enum(["design", "performance", "security", "review", "discovery", "innovation", "architecture", "test", "documentation", "browser", "translate", "blender", "general"]).optional().describe("Specialized skill/persona to activate (default: general)")
+        skill: z.enum(["design", "performance", "security", "review", "discovery", "innovation", "architecture", "test", "documentation", "browser", "translate", "blender", "blender-video", "blender-teaser", "blender-image", "general"]).optional().describe("Specialized skill/persona to activate (default: general)")
     },
     async (args) => {
         trackTool("begin_task");
@@ -876,7 +879,10 @@ Current profile: ${CURRENT_PROFILE}`,
                 documentation: "📜 Scribe",
                 browser: "🧭 Navigator",
                 translate: "🌍 Polyglot",
-                blender: "🎨 Blender"
+                blender: "🎨 Blender",
+                "blender-video": "🎬 Director",
+                "blender-teaser": "⚡ Promo",
+                "blender-image": "🖼️ Studio"
             };
             skillName = skillEmojis[skill] || skill;
 
@@ -959,7 +965,7 @@ Use this when:
 
 Returns the new skill prompt if a skill is specified.`,
     {
-        skill: z.enum(["design", "performance", "security", "review", "discovery", "innovation", "architecture", "test", "documentation", "browser", "translate", "blender", "general"]).optional().describe("New skill/persona to activate"),
+        skill: z.enum(["design", "performance", "security", "review", "discovery", "innovation", "architecture", "test", "documentation", "browser", "translate", "blender", "blender-video", "blender-teaser", "blender-image", "general"]).optional().describe("New skill/persona to activate"),
         task_summary: z.string().optional().describe("New description of the task if it has changed"),
         status_update: z.string().optional().describe("Status update (e.g., 'Moving to testing phase'). Updates 'current_phase'.")
     },
@@ -991,7 +997,10 @@ Returns the new skill prompt if a skill is specified.`,
                 documentation: "📜 Scribe",
                 browser: "🧭 Navigator",
                 translate: "🌍 Polyglot",
-                blender: "🎨 Blender"
+                blender: "🎨 Blender",
+                "blender-video": "🎬 Director",
+                "blender-teaser": "⚡ Promo",
+                "blender-image": "🖼️ Studio"
             };
             skillName = skillEmojis[skill] || skill;
 
