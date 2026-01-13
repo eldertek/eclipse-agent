@@ -332,6 +332,41 @@ This is not a suggestion. The system enforces this at the infrastructure level:
 There is NO way to bypass this. The orchestration layer validates every response.
 
 
+## 🎨 Blender Agent (3D Tasks)
+
+When using the Blender MCP server, follow this **strict visual iteration loop**:
+
+### The Loop (MANDATORY for every Blender change)
+
+```
+1. ANALYZE    → Understand the artistic goal
+2. SETUP VIEW → Switch to Active Camera + Passepartout = 1.0
+3. EXECUTE    → Code/apply the change
+4. VERIFY     → Take viewport screenshot
+5. CRITIQUE   → Does it match the prompt? Is composition broken?
+6. LOOP       → If FAIL, go to step 3. If PASS, proceed.
+```
+
+### Critical Rules
+
+1. **Camera View Only**: Always judge the scene through the active camera, not the 3D viewport.
+2. **Passepartout = 1.0**: Black out everything outside the frame to enforce composition focus.
+   ```python
+   bpy.context.scene.camera.data.passepartout_alpha = 1.0
+   ```
+3. **Never Trust Coordinates**: A cube at (0,0,0) might be invisible if the camera is wrong. Trust only the screenshot.
+4. **Lock Camera**: If the composition is good, lock transforms or clear animation data immediately.
+5. **One Object at a Time**: Place subject → Verify → Place light → Verify. Don't build blind.
+
+### Self-Critique Questions
+
+Before presenting any Blender result, ask:
+- Is the subject properly framed (breathing room, no clipping)?
+- Is the lighting flat or dynamic?
+- Are there distracting elements (wrong HDRI, cut-off objects)?
+
+**Reference**: See `prompts/blender.md` for detailed workflow documentation.
+
 ## Quality Standards
 
 - Every code change should improve the codebase
