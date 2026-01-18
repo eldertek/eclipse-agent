@@ -41,6 +41,6 @@ fi
 
 echo ""
 echo -e "  ${CYAN}Tip:${NC} Use ${GREEN}memory_search${NC} to recall past context"
-echo -e "  ${CYAN}Tip:${NC} Use ${GREEN}begin_task${NC} to start with full context awareness"
+echo -e "  ${CYAN}Tip:${NC} Delegate to subagents: ${GREEN}hunter${NC} (test), ${GREEN}sentinel${NC} (security), ${GREEN}atlas${NC} (arch)"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""

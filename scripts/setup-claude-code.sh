@@ -69,26 +69,40 @@ description: Long-term memory management with semantic search. Use when saving k
 
 You have access to the Eclipse MCP server with semantic memory capabilities.
 
-## When to Use Memory
+## Quick Actions
 
-1. **Save Knowledge** - When you learn something important about the project
-2. **Search Memory** - Before starting tasks, search for relevant context
-3. **Log Decisions** - Record technical decisions with rationale
-4. **Link Memories** - Connect related pieces of knowledge
+When invoked via `/memory` or automatically:
+
+1. **Search First** - Use `memory_search` with the current task context
+2. **Show Relevant** - Display any related memories found
+3. **Suggest Saves** - If working on something new, prompt to save
 
 ## Memory Types
 
-- `semantic` - Facts, architecture, patterns
-- `procedural` - Workflows, how-to guides
-- `episodic` - Decisions, lessons learned
-- `skill` - Reusable techniques
+| Type | Use For | Example |
+|------|---------|---------|
+| `semantic` | Facts, architecture | "API uses JWT auth with 1hr expiry" |
+| `procedural` | How-to, workflows | "Deploy: npm build, then docker push" |
+| `episodic` | Lessons learned | "Don't use library X, causes memory leak" |
+| `skill` | Reusable techniques | "TRIGGER: DB slow -> CHECK: indexes" |
 
-## Best Practices
+## Tools Available
 
-- Search memory at the start of complex tasks
-- Save discoveries that would be useful later
-- Link related memories to build knowledge graphs
-- Use decision_log for important technical choices
+- `memory_search` - Semantic search across all memories
+- `memory_save` - Store new knowledge
+- `memory_update` - Modify existing memory
+- `memory_forget` - Delete outdated info
+- `memory_link` - Connect related memories
+- `memory_stats` - View usage statistics
+- `memory_maintain` - Cleanup and optimization
+
+## Auto-Save Triggers
+
+Consider saving when you:
+- Discover a bug pattern -> `episodic`
+- Learn project architecture -> `semantic`
+- Figure out a workflow -> `procedural`
+- Create a reusable technique -> `skill`
 EOF
 
 success "Installed skill: eclipse-memory"
@@ -103,34 +117,85 @@ description: Task management with begin_task/end_task workflow. Use when startin
 
 # Eclipse Workflow System
 
-Structure your work with task tracking for better context and memory integration.
+Use specialized **subagents** for complex tasks and Eclipse tools for memory/tracking.
 
-## Starting Work
+## Subagents (Use Task tool)
 
-Always use `begin_task` when starting non-trivial work:
-- Automatically searches memory for relevant context
-- Loads specialized skill prompts if needed
-- Creates a tracking session for checkpoints
+Instead of doing everything yourself, delegate to specialized agents:
 
-## During Work
+| Agent | Use For |
+|-------|---------|
+| `bolt` | Performance optimization, profiling |
+| `hunter` | Testing, QA, bug hunting |
+| `scribe` | Documentation, READMEs |
+| `sentinel` | Security audits, vulnerabilities |
+| `atlas` | Architecture analysis, refactoring |
+| `sherlock` | Code exploration, finding TODOs |
+| `spark` | Feature ideation, innovation |
+| `reviewer` | Code review, quality checks |
+| `palette` | UX improvements, accessibility |
+| `polyglot` | i18n, translations |
+| `navigator` | Browser automation, E2E testing |
+| `boardroom` | Business decisions, multi-perspective |
 
-Use `checkpoint` to log significant progress:
-- High importance checkpoints suggest memory saves
-- Decision-related notes suggest decision_log
+## Eclipse Memory Tools
 
-## Ending Work
+Use alongside subagents for context:
 
-Use `end_task` when finishing:
-- Quality gates enforce tests and documentation
-- Suggests saving learnings to memory
-- Prevents premature task closure
+- `begin_task` - Search memory + create tracking session
+- `checkpoint` - Log progress during work
+- `end_task` - Complete with quality gates
+- `memory_search` - Find relevant past knowledge
+- `decision_log` - Record important decisions
 
-## Skills Available
+## Recommended Flow
 
-design, performance, security, review, discovery, innovation, architecture, test, documentation, browser, translate
+1. **Start**: `begin_task` to get memory context
+2. **Delegate**: Use Task tool with appropriate subagent
+3. **Track**: `checkpoint` for significant progress
+4. **Save**: `memory_save` for new learnings
+5. **Complete**: `end_task` with verification
 EOF
 
 success "Installed skill: eclipse-workflow"
+
+# Stats Skill - show memory statistics
+mkdir -p "$SKILLS_DIR/eclipse-stats"
+cat > "$SKILLS_DIR/eclipse-stats/SKILL.md" << 'EOF'
+---
+name: eclipse-stats
+description: Show Eclipse memory statistics and session info. Use when checking memory usage, viewing past decisions, or getting an overview of stored knowledge.
+---
+
+# Eclipse Statistics
+
+Show a comprehensive overview of the Eclipse memory system.
+
+## Instructions
+
+When this skill is invoked, use the `memory_stats` MCP tool to display:
+
+1. **Memory Overview**
+   - Total memories by type (semantic, procedural, episodic, skill)
+   - Memories by scope (profile vs global)
+
+2. **Access Patterns**
+   - Most accessed memories
+   - Never accessed memories (cleanup candidates)
+
+3. **Health Status**
+   - Memory decay status
+   - Oldest memories
+
+## After Displaying Stats
+
+Suggest actions based on stats:
+- If many never-accessed memories: suggest `memory_maintain` with prune
+- If no recent decisions: remind about `decision_log`
+- If low memory count: encourage saving knowledge
+EOF
+
+success "Installed skill: eclipse-stats"
 
 # ─────────────────────────────────────────────────────────────
 # 4. Setup Comprehensive Hooks
@@ -273,6 +338,6 @@ log "Eclipse Agent configured successfully!"
 echo ""
 echo "  MCP Server:  eclipse (in ~/.claude.json)"
 echo "  Data:        ~/.eclipse-agent/"
-echo "  Skills:      eclipse-memory, eclipse-workflow"
+echo "  Skills:      eclipse-memory, eclipse-workflow, eclipse-stats"
 echo "  Hooks:       6 hooks configured"
 echo ""
