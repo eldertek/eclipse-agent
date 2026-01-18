@@ -24,7 +24,7 @@ const { execSync } = require("child_process");
 // CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-const BASE_DATA_DIR = path.join(process.env.HOME, ".gemini", "antigravity", "agent-data");
+const BASE_DATA_DIR = path.join(process.env.HOME, ".eclipse-agent");
 const EMBEDDING_DIM = 384; // all-MiniLM-L6-v2 dimension
 const CACHE_DIR = path.join(BASE_DATA_DIR, ".cache", "models");
 

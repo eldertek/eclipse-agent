@@ -68,33 +68,13 @@ rebuild_mcp() {
 }
 
 # ───────────────────────────────────────────────────────────────────────────
-# Update config files
+# Update Claude Code configuration
 # ───────────────────────────────────────────────────────────────────────────
 
-update_config() {
-    GEMINI_DIR="$HOME/.gemini"
-    ANTIGRAVITY_DIR="$GEMINI_DIR/antigravity"
-
-    # Update GEMINI.md if it changed
-    if [ -f "$INSTALL_DIR/config/GEMINI.md" ]; then
-        if ! diff -q "$INSTALL_DIR/config/GEMINI.md" "$GEMINI_DIR/GEMINI.md" >/dev/null 2>&1; then
-            cp "$INSTALL_DIR/config/GEMINI.md" "$GEMINI_DIR/GEMINI.md"
-            log "Updated GEMINI.md"
-        fi
+update_claude_code() {
+    if [ -x "$INSTALL_DIR/scripts/setup-claude-code.sh" ]; then
+        "$INSTALL_DIR/scripts/setup-claude-code.sh" 2>/dev/null || true
     fi
-
-    # Ensure mcp_config.json is correct
-    mkdir -p "$ANTIGRAVITY_DIR"
-    cat > "$ANTIGRAVITY_DIR/mcp_config.json" << EOF
-{
-  "mcpServers": {
-    "core": {
-      "command": "node",
-      "args": ["$INSTALL_DIR/mcp/agent-core-server/index.js"]
-    }
-  }
-}
-EOF
 }
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -147,7 +127,7 @@ main() {
 
     update_repo
     rebuild_mcp
-    update_config
+    update_claude_code
     update_claude_agents
 
     log "Update complete"

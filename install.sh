@@ -11,7 +11,7 @@ set -e
 # What this does:
 #   1. Clones the eclipse-agent repo to ~/eclipse-agent
 #   2. Installs MCP server dependencies
-#   3. Configures Antigravity (GEMINI.md + mcp_config.json)
+#   3. Configures Claude Code (MCP server, skills, hooks)
 #
 # To update manually: ~/eclipse-agent/scripts/update.sh
 #
@@ -19,8 +19,6 @@ set -e
 
 REPO_URL="${ECLIPSE_REPO_URL:-https://github.com/eldertek/eclipse-agent.git}"
 INSTALL_DIR="${ECLIPSE_INSTALL_DIR:-$HOME/eclipse-agent}"
-GEMINI_DIR="$HOME/.gemini"
-ANTIGRAVITY_DIR="$GEMINI_DIR/antigravity"
 
 # Colors
 RED='\033[0;31m'
@@ -94,25 +92,16 @@ install_mcp() {
 }
 
 # ───────────────────────────────────────────────────────────────────────────
-# Configure Antigravity & Gemini CLI
+# Configure Claude Code
 # ───────────────────────────────────────────────────────────────────────────
 
-configure_antigravity() {
-    log "Running setup scripts..."
+configure_claude_code() {
+    log "Configuring Claude Code..."
 
-    # Run setup-antigravity.sh
-    if [ -x "$INSTALL_DIR/scripts/setup-antigravity.sh" ]; then
-        "$INSTALL_DIR/scripts/setup-antigravity.sh"
+    if [ -x "$INSTALL_DIR/scripts/setup-claude-code.sh" ]; then
+        "$INSTALL_DIR/scripts/setup-claude-code.sh"
     else
-        # Fallback if script not found (e.g., in old checkout without update)
-        error "Setup script not found: $INSTALL_DIR/scripts/setup-antigravity.sh"
-    fi
-
-    # Run setup-gemini-cli.sh
-    if [ -x "$INSTALL_DIR/scripts/setup-gemini-cli.sh" ]; then
-        "$INSTALL_DIR/scripts/setup-gemini-cli.sh"
-    else
-        error "Setup script not found: $INSTALL_DIR/scripts/setup-gemini-cli.sh"
+        error "Setup script not found: $INSTALL_DIR/scripts/setup-claude-code.sh"
     fi
 }
 
@@ -145,7 +134,7 @@ main() {
     check_prerequisites
     setup_repo
     install_mcp
-    configure_antigravity
+    configure_claude_code
     configure_claude_agents
 
     echo ""
@@ -153,13 +142,14 @@ main() {
     success "Installation complete!"
     echo ""
     echo "  Install directory:  $INSTALL_DIR"
-    echo "  System prompt:      $GEMINI_DIR/GEMINI.md"
-    echo "  MCP config:         $ANTIGRAVITY_DIR/mcp_config.json"
-    echo "  Claude agents:      ~/.claude/agents/"
+    echo "  Data directory:     ~/.eclipse-agent/"
+    echo "  MCP server:         ~/.claude.json (eclipse)"
+    echo "  Skills:             ~/.claude/skills/eclipse-memory/"
+    echo "  Agents:             ~/.claude/agents/"
     echo ""
-    echo "  Gemini CLI:  Start a new session, run '/mcp list'"
-    echo "  Claude Code: Run '/agents' to see available agents"
-    echo "  To update:   ~/eclipse-agent/scripts/update.sh"
+    echo "  -> Restart Claude Code to load MCP server"
+    echo "  -> Run '/mcp' to verify eclipse server"
+    echo "  -> Run '/agents' to see available agents"
     echo ""
     echo "═══════════════════════════════════════════════════════════════"
     echo ""
