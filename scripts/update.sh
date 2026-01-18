@@ -74,7 +74,7 @@ rebuild_mcp() {
 update_config() {
     GEMINI_DIR="$HOME/.gemini"
     ANTIGRAVITY_DIR="$GEMINI_DIR/antigravity"
-    
+
     # Update GEMINI.md if it changed
     if [ -f "$INSTALL_DIR/config/GEMINI.md" ]; then
         if ! diff -q "$INSTALL_DIR/config/GEMINI.md" "$GEMINI_DIR/GEMINI.md" >/dev/null 2>&1; then
@@ -82,7 +82,7 @@ update_config() {
             log "Updated GEMINI.md"
         fi
     fi
-    
+
     # Ensure mcp_config.json is correct
     mkdir -p "$ANTIGRAVITY_DIR"
     cat > "$ANTIGRAVITY_DIR/mcp_config.json" << EOF
@@ -98,21 +98,58 @@ EOF
 }
 
 # ───────────────────────────────────────────────────────────────────────────
+# Update Claude Code agents
+# ───────────────────────────────────────────────────────────────────────────
+
+update_claude_agents() {
+    CLAUDE_AGENTS_DIR="$HOME/.claude/agents"
+    SOURCE_AGENTS_DIR="$INSTALL_DIR/claude-agents"
+
+    # Check if source agents exist
+    if [ ! -d "$SOURCE_AGENTS_DIR" ]; then
+        return 0
+    fi
+
+    # Create Claude agents directory if it doesn't exist
+    mkdir -p "$CLAUDE_AGENTS_DIR"
+
+    # Sync agent files
+    UPDATED=0
+    for agent_file in "$SOURCE_AGENTS_DIR"/*.md; do
+        if [ -f "$agent_file" ]; then
+            agent_name=$(basename "$agent_file")
+            target_file="$CLAUDE_AGENTS_DIR/$agent_name"
+
+            # Copy if different or doesn't exist
+            if ! diff -q "$agent_file" "$target_file" >/dev/null 2>&1; then
+                cp "$agent_file" "$target_file"
+                UPDATED=$((UPDATED + 1))
+            fi
+        fi
+    done
+
+    if [ "$UPDATED" -gt 0 ]; then
+        log "Updated $UPDATED Claude Code agent(s)"
+    fi
+}
+
+# ───────────────────────────────────────────────────────────────────────────
 # Main
 # ───────────────────────────────────────────────────────────────────────────
 
 main() {
     log "Starting update..."
-    
+
     if [ ! -d "$INSTALL_DIR/.git" ]; then
         log "ERROR: $INSTALL_DIR is not a git repository"
         exit 1
     fi
-    
+
     update_repo
     rebuild_mcp
     update_config
-    
+    update_claude_agents
+
     log "Update complete"
 }
 

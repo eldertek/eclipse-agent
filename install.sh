@@ -99,7 +99,7 @@ install_mcp() {
 
 configure_antigravity() {
     log "Running setup scripts..."
-    
+
     # Run setup-antigravity.sh
     if [ -x "$INSTALL_DIR/scripts/setup-antigravity.sh" ]; then
         "$INSTALL_DIR/scripts/setup-antigravity.sh"
@@ -117,6 +117,21 @@ configure_antigravity() {
 }
 
 # ───────────────────────────────────────────────────────────────────────────
+# Configure Claude Code Agents
+# ───────────────────────────────────────────────────────────────────────────
+
+configure_claude_agents() {
+    log "Setting up Claude Code agents..."
+
+    # Run setup-claude-agents.sh
+    if [ -x "$INSTALL_DIR/scripts/setup-claude-agents.sh" ]; then
+        "$INSTALL_DIR/scripts/setup-claude-agents.sh"
+    else
+        warn "Claude agents setup script not found (optional): $INSTALL_DIR/scripts/setup-claude-agents.sh"
+    fi
+}
+
+# ───────────────────────────────────────────────────────────────────────────
 # Main
 # ───────────────────────────────────────────────────────────────────────────
 
@@ -126,12 +141,13 @@ main() {
     echo "  Eclipse Agent Installer"
     echo "═══════════════════════════════════════════════════════════════"
     echo ""
-    
+
     check_prerequisites
     setup_repo
     install_mcp
     configure_antigravity
-    
+    configure_claude_agents
+
     echo ""
     echo "═══════════════════════════════════════════════════════════════"
     success "Installation complete!"
@@ -139,10 +155,11 @@ main() {
     echo "  Install directory:  $INSTALL_DIR"
     echo "  System prompt:      $GEMINI_DIR/GEMINI.md"
     echo "  MCP config:         $ANTIGRAVITY_DIR/mcp_config.json"
+    echo "  Claude agents:      ~/.claude/agents/"
     echo ""
-    echo "  To use: Start a new Gemini CLI session"
-    echo "  To verify: Run '/mcp list' in Gemini CLI"
-    echo "  To update: ~/eclipse-agent/scripts/update.sh"
+    echo "  Gemini CLI:  Start a new session, run '/mcp list'"
+    echo "  Claude Code: Run '/agents' to see available agents"
+    echo "  To update:   ~/eclipse-agent/scripts/update.sh"
     echo ""
     echo "═══════════════════════════════════════════════════════════════"
     echo ""
