@@ -1,10 +1,27 @@
 #!/bin/bash
 # Eclipse Hook: Task Reminder
-# Reminds to save learnings and run quality checks
+# Reminds to convene boardroom and save learnings before finishing
+
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+GREEN='\033[0;32m'
+MAGENTA='\033[0;35m'
+BOLD='\033[1m'
+NC='\033[0m'
 
 echo ""
-echo -e "\033[0;36m[Eclipse Reminder]\033[0m Before finishing:"
-echo -e "  \033[0;32m1.\033[0m Save learnings? -> \033[0;33mmemory_save\033[0m"
-echo -e "  \033[0;32m2.\033[0m Log decision? -> \033[0;33mdecision_log\033[0m"
-echo -e "  \033[0;32m3.\033[0m Quality check? -> subagents \033[0;33mhunter\033[0m (test) or \033[0;33mreviewer\033[0m"
+echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${BOLD}${MAGENTA}  🏢 BOARDROOM REMINDER${NC}"
+echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
+echo -e "  ${YELLOW}Before ending this session, consider:${NC}"
+echo ""
+echo -e "  ${GREEN}1.${NC} ${BOLD}Convene the Board${NC} -> Use subagent ${MAGENTA}boardroom${NC}"
+echo -e "     ${CYAN}\"What's the strategic priority? What should we ship next?\"${NC}"
+echo ""
+echo -e "  ${GREEN}2.${NC} Save learnings -> ${YELLOW}memory_save${NC}"
+echo -e "  ${GREEN}3.${NC} Log decisions -> ${YELLOW}decision_log${NC}"
+echo -e "  ${GREEN}4.${NC} Quality check -> subagents ${YELLOW}hunter${NC} or ${YELLOW}reviewer${NC}"
+echo ""
+echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
